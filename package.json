@@ -1,0 +1,12 @@
+{
+  "name": "better-equipment-reservation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Userscript that adds gear presets and preset availability checks to MTSU's Connect2 equipment checkout.",
+  "scripts": {
+    "test": "node --check src/connect2-gear-presets.user.js && node test/run.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.3"
+  }
+}
