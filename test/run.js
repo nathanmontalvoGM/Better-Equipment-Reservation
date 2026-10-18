@@ -54,7 +54,8 @@ function fakeFetch(booked, limits, calls) {
     }
     const lim = limits[id] || {};
     const start = params.get('start'), end = params.get('end');
-    const list = start ? ['Collect from: ' + (lim.collect || '8:00 AM'), longDate(start), 'Return by: ' + (lim.ret || '4:30 PM'), longDate(end)] : [];
+    // Defaults are wide on purpose: only tests that set `limits` run into time limits.
+    const list = start ? ['Collect from: ' + (lim.collect || '7:00 AM'), longDate(start), 'Return by: ' + (lim.ret || '11:00 PM'), longDate(end)] : [];
     return { ok: true, json: async () => ({ Type: 3, TypeName: 'success', Title: 'Available', Text: '', List: list }) };
   };
 }
@@ -79,7 +80,7 @@ function loadPage({ page = 'resource', edit, prompts = [], booked = [], limits =
   const postbacks = [];
   w.document.addEventListener('click', (e) => {
     const t = e.target;
-    if (t.matches && t.matches('input[type=submit], input[type=button], .fuzzySearch button, a[id*="suggestionLink"]')) { postbacks.push(t.id || 'search'); e.preventDefault(); }
+    if (t.matches && t.matches('input[type=submit], input[type=button], .fuzzySearch button, a[id*="suggestionLink"], a[id*="resourcePager"]')) { postbacks.push(t.id || 'search'); e.preventDefault(); }
   }, true);
   w.eval(SCRIPT);
   const root = w.document.getElementById('c2presets-host').shadowRoot;
@@ -334,8 +335,8 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   check(report().includes('✗ Aputure 300D: return by 2:00 PM Wed 10/30'), 'flags an item due back before the return time');
   check(report().includes('✗ 3 Pod Tripod: collect from 10:00 AM Mon 10/28'), 'flags an item not ready by the pickup time');
   check(!report().includes('Arri'), 'a slot is fine when one of its alternates fits');
-  check(!!p.button('Use Mon 10/28 10:00 AM → Wed 10/30 2:00 PM'), 'offers the narrower times that would fit everything');
-  p.button('Use Mon 10/28 10:00 AM → Wed 10/30 2:00 PM').click();
+  check(!!p.button('Or change the times: Mon 10/28 10:00 AM → Wed 10/30 2:00 PM'), 'offers the narrower times that would fit everything');
+  p.button('Or change the times: Mon 10/28 10:00 AM → Wed 10/30 2:00 PM').click();
   const fixed = p.get('schedule').ranges[0];
   check(fixed.startTime === '10:00' && fixed.endTime === '14:00' && fixed.endDate === '2030-10-30', 'one click changes the range to those times');
   await until(() => p.root.querySelector('.okline'), 6000);
@@ -346,10 +347,17 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-30', endTime: '17:00' }] });
   p = loadPage({ limits });
   p.button('Book 1 booking').click();
-  await until(() => p.postbacks.length, 6000);
+  await until(() => (p.get('run') || {}).stage === 'gate', 6000);
   const startMsg = p.confirms.find((m) => m.startsWith('Make 1 booking')) || '';
   check(/⚠ Aputure 300D: return by 2:00 PM/.test(startMsg) && /probably reject/.test(startMsg), 'the start confirmation lists the problems');
-  check(/ctl04_bookBtn$/.test(p.postbacks[0] || ''), 'starting anyway proceeds (you chose OK)');
+  const gateText = p.root.querySelector('.run').textContent;
+  check(p.postbacks.length === 0 && gateText.includes('Nothing has been added yet') && gateText.includes('✗ Aputure 300D: return by 2:00 PM') && gateText.includes('✗ 3 Pod Tripod'),
+    'before adding anything, the run stops on the items that don\'t fit');
+  p.button('Add it anyway').click();
+  check(p.root.querySelector('.run').textContent.includes('✓ Aputure 300D: adding it anyway'), 'records each choice');
+  p.button('Add it anyway').click();
+  await until(() => p.postbacks.length, 6000);
+  check(/ctl04_bookBtn$/.test(p.postbacks[0] || ''), 'once every item is decided, adding starts');
   p.save();
   p = loadPage({ edit: withBasket(1), limits }); await wait(); // 300D added; next is the tripod
   p.save();
@@ -382,6 +390,100 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   p.save();
   p = loadPage({ page: 'time', edit: both(timeValues('10/26/2026', '10/28/2026'), enableNext) }); await wait();
   check(/wizardBannerRight_btnNext$/.test(p.postbacks[0] || '') && p.get('run').stage === 'handoff', 'once Connect2 accepts the suggestion, it presses Next');
+
+  console.log('Catalog and list scan');
+  resetStorage();
+  p = loadPage();
+  const cat = p.get('catalog');
+  check(Object.keys(cat).length === 15 && cat[ID.light300d].type === 'LED Light Kits' && cat[ID.dolly].allowed === false,
+    'remembers every item on the list page, with its category and whether you can book it');
+  p.button('Rescan list (15)').click();
+  check(/resourcePager_LinkButtonNext$/.test(p.postbacks[0] || '') && !!p.get('scan'), 'scanning pages forward through the list');
+  p.save();
+  const lastPage = (h) => h.replace(/<a id="[^"]*resourcePager2?_LinkButtonNext"[^>]*>&gt;<\/a>/g, '');
+  p = loadPage({ edit: lastPage }); await wait();
+  check(p.status().includes('Scan done: the script now knows 15 items (this list has 161)') && p.get('scan') === null, 'stops on the last page and reports what it saved');
+  resetStorage();
+  storage['c2presets.scan'] = JSON.stringify({ phase: 'rewind', loads: 0 });
+  p = loadPage({ edit: (h) => h.replace('<li class="disabled"><span>&lt;</span></li>', '<li><a id="x_resourcePager_LinkButtonPrevious" href="#">&lt;</a></li>') }); await wait();
+  check(p.postbacks[0] === 'x_resourcePager_LinkButtonPrevious', 'starting mid-list, it goes back to page 1 first');
+
+  console.log('Replacements in Check ranges');
+  resetStorage();
+  storage['c2presets.presets'] = JSON.stringify({ Kit: { category: 'Media Arts Equipment', slots: [{ options: [{ id: ID.light300d, name: 'Aputure 300D Light with Fresnel 2x Lens CC3' }] }] } });
+  storage['c2presets.ui'] = JSON.stringify({ current: 'Kit', open: true, showDays: true });
+  storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-30', endTime: '17:00' }] });
+  p = loadPage({ booked: [ID.light300d] });
+  p.button('Check ranges').click();
+  await until(() => p.root.querySelector('.report'), 6000);
+  check(report().includes('✗ Aputure 300D Light with Fresnel 2x Lens CC3: not free'), 'flags the booked item');
+  p.button('Find a replacement').click();
+  await until(() => p.root.querySelector('.cand'), 6000);
+  const cands = () => [...p.root.querySelectorAll('.cand > span')].map((x) => x.textContent);
+  check(cands().join(' | ') === 'Aputure Amaran Tri-8 LED 3 Light Kit CC1-CC2 · LED Light Kits | Aputure Light Storm 120D LED 2 Light Kit DD4 · LED Light Kits | Aputure LS 600c Pro II RGB LED Monolight DD4 · LED Light Kits',
+    'suggests similar lights that are free then, most similar first: ' + cands().join(' | '));
+  check(!cands().some((c) => /Arri|Fresnel for/.test(c)), 'skips items from other categories (tungsten kits, accessories)');
+  p.button('+ Use as alternate').click();
+  check(slotIds(p.get('presets').Kit) === ID.light300d + '|691', 'picking one adds it as an alternate');
+  await until(() => p.root.querySelector('.okline'), 6000);
+  check(!!p.root.querySelector('.okline'), 'and the range now checks clear');
+
+  console.log('Replacements during a run');
+  resetStorage();
+  storage['c2presets.presets'] = JSON.stringify({ Kit: { category: 'Media Arts Equipment', slots: [
+    { options: [{ id: ID.light300d, name: 'Aputure 300D Light with Fresnel 2x Lens CC3' }] },
+    { options: [{ id: ID.tripod, name: '3 Pod V4AH Tripod Y4-Y5' }] },
+  ] } });
+  storage['c2presets.ui'] = JSON.stringify({ current: 'Kit', open: true, showDays: true });
+  storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-30', endTime: '17:00' }] });
+  const snapshot = { ...storage };
+  p = loadPage({ booked: [ID.light300d] });
+  p.button('Book 1 booking').click();
+  await until(() => (p.get('run') || {}).stage === 'gate', 6000);
+  p.button('Find a replacement').click();
+  await until(() => p.root.querySelector('.run .cand'), 6000);
+  p.root.querySelector('.run .cand button').click(); // "Use" the first suggestion
+  await until(() => p.postbacks.length, 6000);
+  check(/ctl05_bookBtn$/.test(p.postbacks[0] || ''), '"Use" adds the replacement (Amaran Tri-8) instead of the booked light');
+  check(slotIds(p.get('presets').Kit).startsWith(ID.light300d + '|691'), 'and keeps it as an alternate for next time');
+
+  storage = { ...snapshot };
+  p = loadPage({ booked: [ID.light300d] });
+  p.button('Book 1 booking').click();
+  await until(() => (p.get('run') || {}).stage === 'gate', 6000);
+  p.button('Leave it out').click();
+  await until(() => p.postbacks.length, 6000);
+  check(/ctl01_bookBtn$/.test(p.postbacks[0] || ''), '"Leave it out" skips it and adds the rest');
+  check(/Left out: Aputure 300D/.test((p.get('queue') || {}).note || ''), 'and the summary will say what was left out');
+
+  console.log('Replacements after a rejected time');
+  resetStorage();
+  storage['c2presets.catalog'] = JSON.stringify({
+    5000: { name: 'Canon EF 24-105mm f/4L IS USM Lens', type: 'Cameras and Accessories', allowed: true, category: 'Media Arts Equipment' },
+    6001: { name: 'Canon EF 24-70mm f/2.8L II USM Lens', type: 'Cameras and Accessories', allowed: true, category: 'Media Arts Equipment' },
+    6002: { name: 'Tamron 24-70mm f/2.8 Di VC Lens N2', type: 'Cameras and Accessories', allowed: true, category: 'Media Arts Equipment' },
+    6003: { name: 'Canon C100 Mark ii A3-A6', type: 'Cameras and Accessories', allowed: true, category: 'Media Arts Equipment' },
+    6004: { name: 'Zoom H6 Recorder R3', type: 'Recorders', allowed: true, category: 'Media Arts Equipment' },
+  });
+  storage['c2presets.presets'] = JSON.stringify({ Catio: { category: 'Media Arts Equipment', slots: [
+    { options: [{ id: '5000', name: 'Canon EF 24-105mm f/4L IS USM Lens' }] },
+    { options: [{ id: '6003', name: 'Canon C100 Mark ii A3-A6' }] },
+  ] } });
+  storage['c2presets.ui'] = JSON.stringify({ current: 'Catio', open: true });
+  storage['c2presets.run'] = JSON.stringify({ preset: 'Catio', b: 0, stage: 'time', problem: '', notes: [],
+    bookings: [{ startDate: '2026-10-26', startTime: '09:00', endDate: '2026-10-28', endTime: '16:30', days: 3 }] });
+  p = loadPage({ page: 'clash' }); await wait();
+  const runText = () => p.root.querySelector('.run').textContent;
+  check(runText().includes('Replace Canon EF 24-105mm f/4L IS USM Lens?') && !runText().includes('Replace Canon C100'),
+    'offers replacements only for items someone else has booked (not cage-hours clashes)');
+  p.button('Find a replacement').click();
+  await until(() => p.root.querySelector('.run .cand'), 6000);
+  check(cands().join(' | ') === 'Canon EF 24-70mm f/2.8L II USM Lens · Cameras and Accessories | Tamron 24-70mm f/2.8 Di VC Lens N2 · Cameras and Accessories',
+    'suggests similar lenses, closest first, not other gear: ' + cands().join(' | '));
+  p.button('+ Use as alternate').click();
+  check(slotIds(p.get('presets').Catio) === '5000|6001,6003', 'adds the lens as an alternate');
+  check(p.status().includes('press Back, empty your basket, then press Redo booking 1'), 'and says how to use it for this booking');
+  check(p.postbacks.length === 0, 'without clicking anything on the page');
 
   console.log('Saved pages with a leftover panel');
   p = loadPage({ page: 'time', edit: (h) => h.replace('</form>', '</form><div id="c2presets-host"></div>') });

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Connect2 Gear Presets (MTSU)
 // @namespace    nathan.c2presets
-// @version      0.5.0
+// @version      0.6.0
 // @description  Gear presets for MTSU's Connect2 checkout: add a whole preset to your basket in one click, check its availability, and book it for several date ranges.
 // @homepageURL  https://github.com/nathanmontalvoGM/Better-Equipment-Reservation
 // @downloadURL  https://raw.githubusercontent.com/nathanmontalvoGM/Better-Equipment-Reservation/main/src/connect2-gear-presets.user.js
@@ -28,7 +28,10 @@
  * - Before a run, every range is checked against Connect2's "collect from" / "return by"
  *   limits (cage hours and other people's bookings), with a one-click fix when narrowing
  *   the times would work. If Connect2 still rejects a time, its reasons and suggested
- *   times are shown, and picking a suggestion continues the run. You finish
+ *   times are shown, and picking a suggestion continues the run.
+ * - Replacements: every equipment list page you open is remembered (or scan the whole list
+ *   once). When an item isn't free for a booking, similar items that are free then are
+ *   offered as alternates, in Check ranges, before a run adds anything, and after a rejection. You finish
  *   Terms, Special Requests, Verify and Complete yourself, then start the next booking.
  */
 
@@ -126,12 +129,14 @@
       }
       const nameEl = li.querySelector('.resource-name');
       const noteEl = li.querySelector('.resource-description');
+      const typeEl = li.querySelector('.resource-type');
       const btn = li.querySelector('.resource-book input[type="submit"]');
       const allowed = !!btn && !btn.disabled;
       return {
         li, id, btn, allowed,
         name: nameEl ? clean(nameEl.textContent) : '',
         note: noteEl ? clean(noteEl.textContent) : '',
+        type: typeEl ? clean(typeEl.textContent) : '',
         reason: allowed ? '' : ((btn && btn.title && btn.title !== 'Disabled' ? btn.title : '') || 'Your account can\'t book this item'),
       };
     }).filter((x) => x.id);
@@ -380,10 +385,12 @@
       let end = { date: b.endDate, time: b.endTime };
       let fixable = true;
       const issues = [];
+      const problemSlots = [];
       for (const slot of p.slots) {
         const units = slot.options.map((o) => { const r = availFor(d, o.id); return { o, r, f: fitFor(r, b) }; });
         if (units.some((u) => u.f.kind === 'ok')) continue;
         issues.push(slot.options[0].name + ': ' + units[0].f.why + (units.length > 1 ? ' (alternates too)' : ''));
+        problemSlots.push({ si: p.slots.indexOf(slot), text: issues[issues.length - 1] });
         // A time-only problem can be fixed by narrowing the booking to the unit with the most room.
         let best = null;
         for (const u of units.filter((x) => x.f.kind === 'hours')) {
@@ -398,7 +405,7 @@
       }
       const fix = fixable && issues.length && minutesAt(end.date, end.time) > minutesAt(start.date, start.time)
         ? { startDate: start.date, startTime: start.time, endDate: end.date, endTime: end.time } : null;
-      reports[b.index] = { ok: !issues.length, issues, fix };
+      reports[b.index] = { ok: !issues.length, issues, problemSlots, fix };
     }
     return reports;
   }
@@ -432,6 +439,159 @@
     clearReports();
     checkRanges(); // same dates are cached, so this is quick
   }
+
+  // ---------- equipment catalog, for suggesting replacements ----------
+  // catalog: { [id]: { name, type, note, allowed, category } }, saved from every equipment list page opened.
+  let catalog = store.get('catalog', {}) || {};
+  const catalogSize = () => Object.keys(catalog).length;
+
+  function recordCatalog() {
+    if (!isSelectPage()) return 0;
+    const cat = category();
+    const items = pageItems();
+    for (const it of items) catalog[it.id] = { name: it.name, type: it.type, note: it.note, allowed: it.allowed, category: cat };
+    if (items.length) store.set('catalog', catalog);
+    return items.length;
+  }
+
+  function listTotal() {
+    const el = qs('.wizard-resource-pager-top .pagination-summary');
+    const m = el && el.textContent.match(/\((\d+) results?\)/);
+    return m ? Number(m[1]) : 0;
+  }
+
+  // Name similarity: shared brand, focal lengths, apertures and kind words count most; shelf codes
+  // ("A3-A6", "DD4", "#9") and filler words are ignored; the same Connect2 category adds a bonus.
+  const STOPWORDS = new Set(['with', 'and', 'for', 'the', 'of', 'a', 'w/', '&', '-', '+', 'to']);
+  const KIND_WORDS = new Set(['lens', 'camera', 'light', 'tripod', 'mic', 'microphone', 'recorder', 'monitor', 'stand', 'headphone',
+    'lav', 'boompole', 'gimbal', 'slider', 'dolly', 'rig', 'mount', 'battery', 'kit', 'fresnel', 'softbox', 'reflector', 'cable',
+    'case', 'filter', 'adapter', 'gel', 'diffusion', 'monolight', 'panel', 'mixer', 'speaker', 'projector', 'drone', 'tablet']);
+  const isCode = (t) => /^#?\d{1,2}$/.test(t) || /^[a-z]{1,2}\d{0,2}(-[a-z]{1,2}\d{0,2})?$/.test(t);
+
+  function nameTokens(name) {
+    const toks = new Map();
+    const add = (t, w) => toks.set(t, Math.max(w, toks.get(t) || 0));
+    String(name || '').toLowerCase().replace(/[(),]/g, ' ').split(/\s+/).filter(Boolean).forEach((raw, i) => {
+      if (STOPWORDS.has(raw) || isCode(raw)) return;
+      const t = raw.length > 3 ? raw.replace(/s$/, '') : raw;
+      if (/^\d+(\.\d+)?(-\d+(\.\d+)?)?mm$/.test(t)) { add(t, 3); add('~focal', 2); } // focal length or zoom range
+      else if (/^f\/\d/.test(t)) add(t, 2);                                            // aperture
+      else if (i === 0 || KIND_WORDS.has(t)) add(t, 2);                                // brand, kind of thing
+      else add(t, 1);
+    });
+    return toks;
+  }
+
+  function similarity(a, b) {
+    const ta = nameTokens(a.name), tb = nameTokens(b.name);
+    let total = 0, shared = 0;
+    for (const [t, w] of ta) { total += w; if (tb.has(t)) shared += w; }
+    let score = total ? shared / total : 0;
+    if (a.type && b.type) score += a.type === b.type ? 0.25 : -0.25;
+    return score;
+  }
+
+  // Similar items not already in the preset, checked against the booking's times; up to 3 that fit.
+  async function findReplacements(orig, b, p) {
+    const d = bookingDates(b);
+    const inPreset = new Set(p.slots.flatMap((s) => s.options.map((o) => o.id)));
+    const base = Object.assign({ name: orig.name }, catalog[orig.id] || {});
+    const pool = Object.entries(catalog)
+      .filter(([id, c]) => !inPreset.has(id) && c.allowed !== false && (!p.category || !c.category || c.category === p.category))
+      .map(([id, c]) => ({ id, name: c.name, type: c.type || '', note: c.note || '', score: similarity(base, c) }))
+      .filter((c) => c.score >= 0.35)
+      .sort((x, y) => y.score - x.score)
+      .slice(0, 8);
+    const found = [];
+    for (const c of pool) {
+      if (fitFor(await fetchAvailability(c.id, d), b).kind === 'ok') found.push(c);
+      if (found.length >= 3) break;
+    }
+    return { found, looked: pool.length };
+  }
+
+  // Replacement searches shown in the panel, by key: { loading } or { found, looked }
+  let replacements = {};
+
+  async function searchReplacements(key, orig, b, p) {
+    replacements[key] = { loading: true };
+    render();
+    try {
+      replacements[key] = await findReplacements(orig, b, p);
+    } catch (e) {
+      replacements[key] = { found: [], looked: 0, error: String(e.message || e) };
+    }
+    render();
+  }
+
+  // Add an item as the last alternate of the preset slot that holds `origId`.
+  function addAlternate(presetName, origId, cand) {
+    const p = presets[presetName];
+    const pos = p && findOption(p, origId);
+    if (!pos || findOption(p, cand.id)) return false;
+    p.slots[pos.si].options.push({ id: cand.id, name: cand.name, note: cand.note || '' });
+    savePresets();
+    return true;
+  }
+
+  function renderReplacements(key, orig, b, p, pickLabel, onPick) {
+    const st = replacements[key];
+    if (!catalogSize()) {
+      return el('div', { class: 'repl' },
+        el('div', { class: 'muted' }, 'To suggest replacements, the script needs to know what else the cage has.'),
+        isSelectPage() ? el('button', { onclick: startScan }, 'Scan equipment list') : el('div', { class: 'muted' }, 'Open the equipment list once, or scan it from there.'));
+    }
+    if (!st) return el('div', { class: 'repl' }, el('button', { onclick: () => searchReplacements(key, orig, b, p) }, 'Find a replacement'));
+    if (st.loading) return el('div', { class: 'repl muted' }, 'Looking for similar items that are free then…');
+    if (!st.found.length) {
+      return el('div', { class: 'repl muted' }, st.looked
+        ? 'None of the ' + st.looked + ' most similar items are free then.'
+        : 'No similar items found in the ' + catalogSize() + ' items the script knows about' + (listTotal() > catalogSize() ? ' (scan the full list to search more)' : '') + '.');
+    }
+    return el('div', { class: 'repl' },
+      el('div', { class: 'muted' }, 'Free then:'),
+      st.found.map((c) => el('div', { class: 'cand' },
+        el('span', {}, c.name, c.type ? el('span', { class: 'muted' }, ' · ' + c.type) : null),
+        el('button', { onclick: () => onPick(c) }, pickLabel))));
+  }
+
+  // ---------- scanning the whole equipment list into the catalog ----------
+  // scan: { phase: 'clear'|'rewind'|'walk', loads }
+  const nextPageLink = () => qs('[id$="resourcePager_LinkButtonNext"]');
+  const prevPageLink = () => qs('[id$="resourcePager_LinkButtonPrevious"], [id$="resourcePager_LinkButtonPrev"], .wizard-resource-pager-top a[aria-label="Previous page"]');
+
+  function startScan() {
+    if (!isSelectPage()) return setStatus('Open Book by Category → your equipment list first.');
+    if (store.get('queue', null) || getRun()) return setStatus('Finish or stop the current run first.');
+    store.set('scan', { phase: 'clear', loads: 0 });
+    scanTick();
+  }
+
+  function scanTick() {
+    const sc = store.get('scan', null);
+    if (!sc) return;
+    if (!isSelectPage()) { store.del('scan'); return setStatus('Scan stopped: this isn\'t an equipment list page.'); }
+    sc.loads += 1;
+    if (sc.loads > 60) { store.del('scan'); return setStatus('Scan stopped after 60 pages. ' + catalogSize() + ' items saved.'); }
+    if (sc.phase === 'clear') {
+      sc.phase = 'rewind';
+      const box = searchBox();
+      if (box && box.value.trim()) { store.set('scan', sc); box.value = ''; searchBtn().click(); return; } // show the full list
+    }
+    if (sc.phase === 'rewind') {
+      const prev = prevPageLink();
+      if (prev) { store.set('scan', sc); setStatus('Scanning: going back to page 1…'); prev.click(); return; }
+      sc.phase = 'walk';
+    }
+    recordCatalog();
+    const next = nextPageLink();
+    if (next) { store.set('scan', sc); setStatus('Scanning the equipment list… ' + catalogSize() + ' items saved so far.'); next.click(); return; }
+    store.del('scan');
+    const total = listTotal();
+    setStatus('Scan done: the script now knows ' + catalogSize() + ' items' + (total ? ' (this list has ' + total + ')' : '') + ', so it can suggest replacements.');
+  }
+
+  function stopScan() { store.del('scan'); setStatus('Scan stopped. ' + catalogSize() + ' items saved.'); }
 
   // ---------- booking run across date ranges (survives page reloads) ----------
   // run: { preset, bookings, b, stage: 'basket'|'create'|'time'|'handoff', problem, notes: [] }
@@ -481,7 +641,20 @@
     if (!isSelectPage()) return setStatus('Open Book by Category → ' + ((presets[run.preset] || {}).category || 'your equipment category') + ' first.');
     const n = basketCount();
     if (n > 0 && !confirm('Your basket already has ' + n + ' item(s). They\'ll be included in booking ' + (run.b + 1) + '. Continue?')) return;
-    run.stage = 'basket'; run.problem = ''; run.notes[run.b] = '';
+    run.stage = 'basket'; run.problem = ''; run.notes[run.b] = ''; run.gate = null;
+    saveRun(run);
+    startQueue(run.preset, { dates: bookingDates(run.bookings[run.b]), booking: run.bookings[run.b], run: true });
+  }
+
+  // A choice in the run's "not free" list: 'alt' (a replacement was added), 'anyway', or 'skip'.
+  function decideGate(si, choice) {
+    const run = getRun();
+    if (!run || run.stage !== 'gate' || !run.gate) return;
+    run.gate.decided[si] = choice;
+    saveRun(run);
+    const open = run.gate.blocked.filter((g) => !run.gate.decided[g.si]);
+    if (open.length) return render();
+    run.stage = 'basket';
     saveRun(run);
     startQueue(run.preset, { dates: bookingDates(run.bookings[run.b]), booking: run.bookings[run.b], run: true });
   }
@@ -522,15 +695,15 @@
       const why = /open times/i.test(title) ? 'outside cage hours'
         : /other bookings/i.test(title) ? 'booked by someone else during that time'
         : title.replace(/^clashes with /i, '');
-      return item ? item + ': ' + why : clean(title + ' ' + msg);
-    }).filter(Boolean);
+      return item ? { item, why, text: item + ': ' + why } : { item: '', why: '', text: clean(title + ' ' + msg) };
+    }).filter((r) => r.text);
     const suggestions = qsa('.suggestions-list a[id*="suggestionLink"]', box).map((a) => {
       const text = clean(a.textContent);
       const [from, to] = text.split(/\s+-\s+/);
       const s = parseMdyTime(from), e = parseMdyTime(to);
       return s && e ? { id: a.id, startDate: s.date, startTime: s.time, endDate: e.date, endTime: e.time } : null;
     }).filter(Boolean);
-    return reasons.length || suggestions.length ? { reasons, suggestions } : null;
+    return reasons.length || suggestions.length ? { reasons: reasons.map((r) => r.text), items: reasons.filter((r) => r.item), suggestions } : null;
   }
 
   // Use one of Connect2's suggested times: its own link sets the times and posts back,
@@ -557,7 +730,7 @@
   // Runs on every page load while a run is active and no basket queue is working.
   function runTick() {
     const run = getRun();
-    if (!run || run.stage === 'handoff' || run.stage === 'basket') return;
+    if (!run || run.stage === 'handoff' || run.stage === 'basket' || run.stage === 'gate') return;
     const bk = run.bookings[run.b];
     if (!isTimePage()) {
       return handoff(run, 'Connect2 didn\'t open the Select time step' + (pageMessage() ? ': ' + pageMessage() : '') +
@@ -619,11 +792,27 @@
       } else if (p.slots.some((s) => s.options.length > 1)) {
         note = 'No dates were set, so first choices were used. To let alternates replace booked units, set Collect/Return and press Go before adding.';
       }
-      const items = p.slots.map((s) => {
+      let items = p.slots.map((s) => {
         const options = orderOptions(s.options, d, opts.booking);
         const fitOf = (o) => (d ? fitFor(availFor(d, o.id), opts.booking) : { kind: 'nodates', why: '' });
         return { options, fits: options.map(fitOf), first: s.options[0], firstFit: fitOf(s.options[0]) };
       });
+      // In a run, stop before adding anything if an item has no unit that fits this booking,
+      // so you can pick a replacement, add it anyway, or leave it out.
+      const run = opts.run ? getRun() : null;
+      if (run && d) {
+        const decided = (run.gate && run.gate.decided) || {};
+        const blocked = items.map((it, si) => si).filter((si) => !items[si].fits.some((f) => f.kind === 'ok') && !decided[si]);
+        if (blocked.length) {
+          run.stage = 'gate';
+          run.gate = { decided, blocked: blocked.map((si) => ({ si, id: items[si].first.id, name: items[si].first.name, why: items[si].firstFit.why })) };
+          saveRun(run);
+          setStatus('Booking ' + (run.b + 1) + ': ' + blocked.length + (blocked.length > 1 ? ' items aren\'t' : ' item isn\'t') + ' free as booked. Nothing was added yet; choose what to do above.');
+          return;
+        }
+        items = items.filter((it, si) => decided[si] !== 'skip');
+        if (Object.values(decided).includes('skip')) note = [note, 'Left out: ' + Object.keys(decided).filter((k) => decided[k] === 'skip').map((k) => p.slots[k].options[0].name).join('; ') + '.'].filter(Boolean).join(' ');
+      }
       store.set('queue', { preset: name, items, i: 0, opt: 0, phase: 'find', before: -1, loadsKey: '', loads: 0, skipped: [], results: [], note, run: !!opts.run });
     } finally {
       starting = false;
@@ -893,6 +1082,11 @@
     .day .lbl { width: 46px; flex: none; font-size: 12px; color: #444; }
     .day .xspace { width: 27px; flex: none; }
     .okline { color: #166534; font-size: 12px; }
+    .repl { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; padding-left: 12px; }
+    .repl button, .gate button { font-size: 12px; }
+    .cand { display: flex; gap: 6px; align-items: baseline; justify-content: space-between; width: 100%; font-size: 12px; }
+    .cand button { flex: none; }
+    .gate { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid #bfdbfe; padding-top: 6px; }
     .report { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
     .report button, .sugs button { font-size: 12px; }
     .sugs { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
@@ -934,9 +1128,21 @@
     const rep = rangeReportsFor === ui.current ? rangeReports[i] : null;
     if (!rep) return null;
     if (rep.ok) return el('div', { class: 'okline' }, '✓ Everything in "' + ui.current + '" is free then');
+    const p = presets[ui.current];
+    const b = computeBookings(schedule.ranges).find((x) => x.index === i);
     return el('div', { class: 'report' },
-      rep.issues.map((t) => el('div', { class: 'warn' }, '✗ ' + t)),
-      rep.fix ? el('button', { onclick: () => applyFix(i) }, 'Use ' + bookingLabel(rep.fix)) : null);
+      (rep.problemSlots || rep.issues.map((text) => ({ text }))).map((ps) => {
+        const slot = p && ps.si != null ? p.slots[ps.si] : null;
+        return el('div', {},
+          el('div', { class: 'warn' }, '✗ ' + ps.text),
+          slot && b ? renderReplacements('range:' + i + ':' + ps.si, slot.options[0], b, p, '+ Use as alternate', (c) => {
+            addAlternate(ui.current, slot.options[0].id, c);
+            replacements = {};
+            clearReports();
+            checkRanges();
+          }) : null);
+      }),
+      rep.fix ? el('button', { onclick: () => applyFix(i) }, 'Or change the times: ' + bookingLabel(rep.fix)) : null);
   }
 
   function renderRanges(p) {
@@ -978,7 +1184,26 @@
     const bk = run.bookings[run.b];
     const last = run.b + 1 >= n;
     const box = el('div', { class: 'run' }, el('b', {}, 'Booking ' + (run.b + 1) + ' of ' + n + ': ' + bookingLabel(bk)));
-    if (run.stage !== 'handoff') {
+    if (run.stage === 'gate' && run.gate) {
+      const p = presets[run.preset];
+      box.append(el('div', {}, 'Nothing has been added yet. These items aren\'t free for this booking:'));
+      for (const g of run.gate.blocked) {
+        const choice = run.gate.decided[g.si];
+        if (choice) {
+          box.append(el('div', { class: 'okline' }, '✓ ' + g.name + ': ' + (choice === 'skip' ? 'leaving it out' : choice === 'anyway' ? 'adding it anyway' : 'using a replacement')));
+          continue;
+        }
+        box.append(el('div', { class: 'gate' },
+          el('div', { class: 'warn' }, '✗ ' + g.name + ': ' + g.why),
+          p ? renderReplacements('gate:' + run.b + ':' + g.si, { id: g.id, name: g.name }, bk, p, 'Use', (c) => {
+            addAlternate(run.preset, g.id, c);
+            decideGate(g.si, 'alt');
+          }) : null,
+          el('div', { class: 'row' },
+            el('button', { onclick: () => decideGate(g.si, 'anyway') }, 'Add it anyway'),
+            el('button', { onclick: () => decideGate(g.si, 'skip') }, 'Leave it out'))));
+      }
+    } else if (run.stage !== 'handoff') {
       box.append(el('div', {}, run.stage === 'basket' ? 'Adding "' + run.preset + '" to the basket…' : 'Setting the times…'));
     } else {
       if (run.problem) box.append(el('div', { class: 'warn' }, '⚠ ' + run.problem));
@@ -994,6 +1219,19 @@
         if (clash && clash.suggestions.length) {
           box.append(el('div', { class: 'sugs' }, clash.suggestions.slice(0, 6).map((sug) =>
             el('button', { onclick: () => pickSuggestion(sug) }, bookingLabel(sug)))));
+        }
+        // Items someone else has booked: offer similar items as alternates for a redo.
+        const p = presets[run.preset];
+        for (const ci of (clash ? clash.items : []).filter((x) => /someone else/.test(x.why))) {
+          const opt = p && p.slots.flatMap((sl) => sl.options).find((o) => clean(o.name) === clean(ci.item));
+          if (!opt) continue;
+          box.append(el('div', { class: 'gate' },
+            el('div', {}, 'Replace ' + ci.item + '?'),
+            renderReplacements('clash:' + run.b + ':' + opt.id, opt, bk, p, '+ Use as alternate', (c) => {
+              addAlternate(run.preset, opt.id, c);
+              replacements = {};
+              setStatus(c.name + ' is now an alternate for ' + opt.name + '. To use it for this booking: press Back, empty your basket, then press Redo booking ' + (run.b + 1) + '.');
+            })));
         }
       } else {
         box.append(el('div', {}, 'Your turn: Terms & Conditions → Special Requests → Verify → Complete.' +
@@ -1067,6 +1305,10 @@
       if (statusText) body.append(el('div', { class: 'status' }, statusText));
 
       body.append(el('div', { class: 'row' },
+        store.get('scan', null)
+          ? el('button', { onclick: stopScan }, 'Stop scan')
+          : el('button', { onclick: startScan, disabled: !isSelectPage() || !!store.get('queue', null) || !!getRun(), title: 'Page through the whole equipment list once so the script can suggest replacements' },
+            catalogSize() ? 'Rescan list (' + catalogSize() + ')' : 'Scan equipment list'),
         el('button', { onclick: exportPresets, disabled: !names.length }, 'Export'),
         el('button', { onclick: importPresets }, 'Import')));
 
@@ -1109,7 +1351,9 @@
     }
   }
 
+  recordCatalog();
   render();
-  if (store.get('queue', null)) runQueue(true);
+  if (store.get('scan', null)) scanTick();
+  else if (store.get('queue', null)) runQueue(true);
   else runTick();
 })();
