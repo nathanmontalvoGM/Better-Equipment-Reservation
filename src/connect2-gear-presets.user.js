@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Connect2 Gear Presets (MTSU)
 // @namespace    nathan.c2presets
-// @version      0.3.0
-// @description  Gear presets for MTSU's Connect2 checkout: add a whole preset to your basket in one click, check its availability, and book it across several shoot days.
+// @version      0.4.0
+// @description  Gear presets for MTSU's Connect2 checkout: add a whole preset to your basket in one click, check its availability, and book it for several date ranges.
 // @homepageURL  https://github.com/nathanmontalvoGM/Better-Equipment-Reservation
 // @downloadURL  https://raw.githubusercontent.com/nathanmontalvoGM/Better-Equipment-Reservation/main/src/connect2-gear-presets.user.js
 // @updateURL    https://raw.githubusercontent.com/nathanmontalvoGM/Better-Equipment-Reservation/main/src/connect2-gear-presets.user.js
@@ -22,8 +22,8 @@
  *   It never submits a booking: you still pick dates and press "Create booking" yourself.
  * - Items your account can't book can't be added to presets, and item notes such as
  *   "needs permission" are shown in the preset.
- * - Shoot days: list the days you need a preset, and the script makes one booking per day
- *   (back-to-back days merged up to Connect2's 3-day maximum). For each booking it adds the
+ * - Date ranges: list each pickup → return you need a preset for, and the script makes one
+ *   booking per range (Connect2 allows up to 3 days). For each booking it adds the
  *   gear, fills in the times, presses Next, and stops at Terms & Conditions. You finish
  *   Terms, Special Requests, Verify and Complete yourself, then start the next booking.
  */
@@ -217,50 +217,56 @@
       : 'Every slot in "' + ui.current + '" has a free unit for ' + d.label + '.');
   }
 
-  // ---------- shoot days → bookings ----------
-  // schedule: { days: [{ date: 'YYYY-MM-DD', start: 'HH:mm', end: 'HH:mm' }], merge }
-  // A return time at or before the pickup time means the gear comes back the next day.
+  // ---------- date ranges → bookings ----------
+  // schedule: { ranges: [{ startDate: 'YYYY-MM-DD', startTime: 'HH:mm', endDate, endTime }] }
+  // Each range is one booking: pickup date/time → return date/time.
   const MAX_BOOKING_DAYS = 3;   // Connect2 at MTSU: "3 day maximum booking period"
   const MAX_BOOKING_HOURS = 72; // counted conservatively: both limits must hold
-  let schedule = Object.assign({ days: [], merge: true }, store.get('schedule', {}));
-  const saveSchedule = () => store.set('schedule', schedule);
 
   const pad = (n) => String(n).padStart(2, '0');
   const ymdToUtc = (ymd) => { const [y, m, d] = ymd.split('-').map(Number); return Date.UTC(y, m - 1, d); };
   const addDays = (ymd, n) => new Date(ymdToUtc(ymd) + n * 864e5).toISOString().slice(0, 10);
+  const daysBetween = (a, b) => Math.round((ymdToUtc(b) - ymdToUtc(a)) / 864e5);
   const minutesAt = (ymd, hm) => ymdToUtc(ymd) / 6e4 + Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5));
   const mdy = (ymd) => ymd.slice(5, 7) + '/' + ymd.slice(8, 10) + '/' + ymd.slice(0, 4);
   const time12 = (hm) => { const h = Number(hm.slice(0, 2)); return ((h + 11) % 12 + 1) + ':' + hm.slice(3, 5) + ' ' + (h < 12 ? 'AM' : 'PM'); };
   const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const shortDay = (ymd) => WEEKDAYS[new Date(ymdToUtc(ymd)).getUTCDay()] + ' ' + Number(ymd.slice(5, 7)) + '/' + Number(ymd.slice(8, 10));
   const todayYmd = () => { const t = new Date(); return t.getFullYear() + '-' + pad(t.getMonth() + 1) + '-' + pad(t.getDate()); };
-  const validDay = (d) => !!d && /^\d{4}-\d{2}-\d{2}$/.test(d.date) && /^\d{2}:\d{2}$/.test(d.start) && /^\d{2}:\d{2}$/.test(d.end);
+  const isYmd = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || '');
+  const isHm = (v) => /^\d{2}:\d{2}$/.test(v || '');
+  const validRange = (r) => !!r && isYmd(r.startDate) && isHm(r.startTime) && isYmd(r.endDate) && isHm(r.endTime);
 
-  function computeBookings(days, merge) {
-    const sorted = days.filter(validDay).slice().sort((a, b) => minutesAt(a.date, a.start) - minutesAt(b.date, b.start));
-    const out = [];
-    for (const d of sorted) {
-      const endDate = d.end <= d.start ? addDays(d.date, 1) : d.date;
-      const prev = out[out.length - 1];
-      if (merge && prev && addDays(prev.lastDay, 1) === d.date) {
-        const hours = (minutesAt(endDate, d.end) - minutesAt(prev.startDate, prev.startTime)) / 60;
-        const calDays = (ymdToUtc(endDate) - ymdToUtc(prev.startDate)) / 864e5 + 1;
-        if (hours <= MAX_BOOKING_HOURS && calDays <= MAX_BOOKING_DAYS) {
-          Object.assign(prev, { endDate, endTime: d.end, lastDay: d.date, days: prev.days + 1 });
-          continue;
-        }
-      }
-      out.push({ startDate: d.date, startTime: d.start, endDate, endTime: d.end, lastDay: d.date, days: 1 });
-    }
+  function loadSchedule() {
+    const raw = store.get('schedule', {}) || {};
+    if (Array.isArray(raw.ranges)) return { ranges: raw.ranges };
+    // v0.3.0 stored single shoot days; an earlier return time meant the next day.
+    const ranges = (Array.isArray(raw.days) ? raw.days : [])
+      .filter((d) => d && isYmd(d.date) && isHm(d.start) && isHm(d.end))
+      .map((d) => ({ startDate: d.date, startTime: d.start, endDate: d.end <= d.start ? addDays(d.date, 1) : d.date, endTime: d.end }));
+    return { ranges };
+  }
+  let schedule = loadSchedule();
+  const saveSchedule = () => store.set('schedule', schedule);
+  saveSchedule();
+
+  // Bookings in pickup order. `index` points back at the range row; `invalid` means it can't be booked as entered.
+  function computeBookings(ranges) {
     const today = todayYmd();
+    const out = ranges
+      .map((r, index) => (validRange(r) ? { startDate: r.startDate, startTime: r.startTime, endDate: r.endDate, endTime: r.endTime, index } : null))
+      .filter(Boolean)
+      .sort((a, b) => minutesAt(a.startDate, a.startTime) - minutesAt(b.startDate, b.startTime));
     out.forEach((b, i) => {
       b.warnings = [];
-      const prev = out[i - 1];
-      if (b.startDate < today) b.warnings.push('starts in the past');
-      if (prev && minutesAt(b.startDate, b.startTime) < minutesAt(prev.endDate, prev.endTime)) b.warnings.push('overlaps the booking before it');
+      b.days = daysBetween(b.startDate, b.endDate) + 1;
       const hours = (minutesAt(b.endDate, b.endTime) - minutesAt(b.startDate, b.startTime)) / 60;
-      const calDays = (ymdToUtc(b.endDate) - ymdToUtc(b.startDate)) / 864e5 + 1;
-      if (hours > MAX_BOOKING_HOURS || calDays > MAX_BOOKING_DAYS) b.warnings.push('longer than the 3-day maximum');
+      b.invalid = hours <= 0;
+      if (b.invalid) b.warnings.push('return is not after pickup');
+      if (b.startDate < today) b.warnings.push('starts in the past');
+      if (hours > MAX_BOOKING_HOURS || b.days > MAX_BOOKING_DAYS) b.warnings.push('longer than the 3-day maximum');
+      const prev = out[i - 1];
+      if (prev && minutesAt(b.startDate, b.startTime) < minutesAt(prev.endDate, prev.endTime)) b.warnings.push('overlaps another range');
     });
     return out;
   }
@@ -270,21 +276,32 @@
   // Same shape pageDates() returns, so availability checks and the queue can use it.
   const bookingDates = (b) => ({ kind: 'range', start: mdy(b.startDate), end: mdy(b.endDate), label: mdy(b.startDate) + ' → ' + mdy(b.endDate) });
 
-  function addDay() {
-    const last = schedule.days[schedule.days.length - 1];
-    schedule.days.push(validDay(last)
-      ? { date: addDays(last.date, 1), start: last.start, end: last.end }
-      : { date: addDays(todayYmd(), 1), start: '09:00', end: '17:00' });
+  function addRange() {
+    const last = schedule.ranges[schedule.ranges.length - 1];
+    if (validRange(last)) {
+      const startDate = addDays(last.endDate, 1); // day after the last return, same length and times
+      schedule.ranges.push({ startDate, startTime: last.startTime, endDate: addDays(startDate, daysBetween(last.startDate, last.endDate)), endTime: last.endTime });
+    } else {
+      const d = addDays(todayYmd(), 1);
+      schedule.ranges.push({ startDate: d, startTime: '09:00', endDate: d, endTime: '17:00' });
+    }
     saveSchedule(); render();
   }
 
-  function updateDay(i, field, value) {
-    if (!schedule.days[i]) return;
-    schedule.days[i][field] = value;
+  function updateRange(i, field, value) {
+    const r = schedule.ranges[i];
+    if (!r) return;
+    // Moving the pickup date moves the return date with it, keeping the range's length.
+    if (field === 'startDate' && isYmd(value) && isYmd(r.startDate) && isYmd(r.endDate)) {
+      r.endDate = addDays(r.endDate, daysBetween(r.startDate, value));
+    }
+    r[field] = value;
     saveSchedule(); render();
   }
 
-  // ---------- booking run across shoot days (survives page reloads) ----------
+  function removeRange(i) { schedule.ranges.splice(i, 1); saveSchedule(); render(); }
+
+  // ---------- booking run across date ranges (survives page reloads) ----------
   // run: { preset, bookings, b, stage: 'basket'|'create'|'time'|'handoff', problem, notes: [] }
   const getRun = () => store.get('run', null);
   const saveRun = (r) => store.set('run', r);
@@ -299,9 +316,10 @@
 
   function startRun() {
     const p = presets[ui.current];
-    const bookings = computeBookings(schedule.days, schedule.merge);
+    const bookings = computeBookings(schedule.ranges);
     if (!p || !p.slots.length) return setStatus('Pick a preset with items first.');
-    if (!bookings.length) return setStatus('Add at least one shoot day first.');
+    if (!bookings.length) return setStatus('Add at least one date range first.');
+    if (bookings.some((b) => b.invalid)) return setStatus('Fix the date ranges marked "return is not after pickup" first.');
     if (!isSelectPage()) return setStatus('Open Book by Category → ' + (p.category || 'your equipment category') + ' first.');
     if (p.category && category() && p.category !== category()) {
       if (!confirm('This preset was made in "' + p.category + '", but you are in "' + category() + '". Continue anyway?')) return;
@@ -690,9 +708,9 @@
     .day { display: flex; gap: 4px; align-items: center; }
     .day input { font: 12px system-ui, sans-serif; padding: 2px 3px; border: 1px solid #b7bcc4; border-radius: 4px; min-width: 0; }
     .day input[type=date] { flex: 1.4; } .day input[type=time] { flex: 1; }
-    label.muted { display: flex; gap: 4px; align-items: center; }
-    ol.bookings { margin: 0; padding-left: 20px; font-size: 12px; }
-    ol.bookings li { margin: 2px 0; }
+    .day .lbl { width: 46px; flex: none; font-size: 12px; color: #444; }
+    .day .xspace { width: 27px; flex: none; }
+    .range { border: 1px solid #e3e5e8; border-radius: 6px; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
     .run { border: 2px solid #2563eb; border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px; background: #eff6ff; }
   `;
 
@@ -726,33 +744,34 @@
         el('button', { class: 'x', title: 'Remove this slot', onclick: () => removeSlot(si) }, '×')));
   }
 
-  function renderDays(p) {
+  function renderRanges(p) {
     const wrap = el('div', { class: 'days' },
       el('button', { class: 'linkish', onclick: () => { ui.showDays = !ui.showDays; saveUi(); render(); } },
-        (ui.showDays ? '▾ ' : '▸ ') + 'Book over shoot days' + (schedule.days.length ? ' (' + schedule.days.length + ')' : '')));
+        (ui.showDays ? '▾ ' : '▸ ') + 'Book several date ranges' + (schedule.ranges.length ? ' (' + schedule.ranges.length + ')' : '')));
     if (!ui.showDays) return wrap;
-    schedule.days.forEach((d, i) => {
-      wrap.append(el('div', { class: 'day' },
-        el('input', { type: 'date', value: d.date, 'aria-label': 'Shoot date', onchange: (e) => updateDay(i, 'date', e.target.value) }),
-        el('input', { type: 'time', value: d.start, step: 1800, 'aria-label': 'Pickup time', onchange: (e) => updateDay(i, 'start', e.target.value) }),
-        el('span', { class: 'muted' }, '→'),
-        el('input', { type: 'time', value: d.end, step: 1800, 'aria-label': 'Return time', onchange: (e) => updateDay(i, 'end', e.target.value) }),
-        el('button', { class: 'x', title: 'Remove this day', onclick: () => { schedule.days.splice(i, 1); saveSchedule(); render(); } }, '×')));
+    const bookings = computeBookings(schedule.ranges);
+    schedule.ranges.forEach((r, i) => {
+      const b = bookings.find((x) => x.index === i);
+      wrap.append(el('div', { class: 'range' },
+        el('div', { class: 'day' },
+          el('span', { class: 'lbl' }, 'Pickup'),
+          el('input', { type: 'date', value: r.startDate, 'aria-label': 'Pickup date', onchange: (e) => updateRange(i, 'startDate', e.target.value) }),
+          el('input', { type: 'time', value: r.startTime, step: 1800, 'aria-label': 'Pickup time', onchange: (e) => updateRange(i, 'startTime', e.target.value) }),
+          el('button', { class: 'x', title: 'Remove this date range', onclick: () => removeRange(i) }, '×')),
+        el('div', { class: 'day' },
+          el('span', { class: 'lbl' }, 'Return'),
+          el('input', { type: 'date', value: r.endDate, min: r.startDate, 'aria-label': 'Return date', onchange: (e) => updateRange(i, 'endDate', e.target.value) }),
+          el('input', { type: 'time', value: r.endTime, step: 1800, 'aria-label': 'Return time', onchange: (e) => updateRange(i, 'endTime', e.target.value) }),
+          el('span', { class: 'xspace' })),
+        b ? el('div', { class: 'muted' }, bookingLabel(b) + ' · ' + b.days + (b.days > 1 ? ' days' : ' day')) : null,
+        b && b.warnings.length ? el('div', { class: 'warn' }, '⚠ ' + b.warnings.join('; ')) : null));
     });
-    wrap.append(el('div', { class: 'row' },
-      el('button', { onclick: addDay }, '+ Day'),
-      el('label', { class: 'muted' },
-        el('input', { type: 'checkbox', checked: !!schedule.merge, onchange: (e) => { schedule.merge = e.target.checked; saveSchedule(); render(); } }),
-        'Merge back-to-back days (3-day max)')));
-    const bookings = computeBookings(schedule.days, schedule.merge);
+    wrap.append(el('div', { class: 'row' }, el('button', { onclick: addRange }, '+ Date range')));
     if (bookings.length) {
-      wrap.append(el('ol', { class: 'bookings' }, bookings.map((b) => el('li', {},
-        bookingLabel(b) + (b.days > 1 ? ' (' + b.days + ' shoot days)' : ''),
-        b.warnings.length ? el('div', { class: 'warn' }, '⚠ ' + b.warnings.join('; ')) : null))));
       wrap.append(el('div', { class: 'row' },
-        el('button', { class: 'primary', disabled: !p.slots.length || !!getRun() || !!store.get('queue', null) || !isSelectPage(), onclick: startRun },
+        el('button', { class: 'primary', disabled: !p.slots.length || !!getRun() || !!store.get('queue', null) || !isSelectPage() || bookings.some((b) => b.invalid), onclick: startRun },
           'Book ' + bookings.length + (bookings.length > 1 ? ' bookings' : ' booking'))));
-      wrap.append(el('div', { class: 'muted' }, 'A return time at or before pickup means the gear comes back the next day. Each booking stops at Terms & Conditions for you to finish.'));
+      wrap.append(el('div', { class: 'muted' }, 'Each date range is one booking (3-day maximum). Each booking stops at Terms & Conditions for you to finish.'));
     }
     return wrap;
   }
@@ -830,7 +849,7 @@
           ? 'Dates from Connect2: ' + dates.label + '. Adding will use a free unit for each slot.'
           : 'Set Collect/Return in the Availability box and press Go to check dates and let alternates replace booked units.'));
 
-        body.append(renderDays(p));
+        body.append(renderRanges(p));
       }
 
       if (queue) {

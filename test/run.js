@@ -194,32 +194,55 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   const badges = [...p.root.querySelectorAll('.badge')].map((b) => b.textContent);
   check(badges.join() === 'Not available,Not available,Available', 'shows a badge for each unit checked');
 
-  console.log('Shoot days → bookings');
+  console.log('Date ranges → bookings');
   resetStorage();
-  const days = [
-    { date: '2030-10-25', start: '09:00', end: '17:00' }, // Fri
-    { date: '2030-10-26', start: '09:00', end: '17:00' }, // Sat
-    { date: '2030-10-27', start: '09:00', end: '17:00' }, // Sun
-    { date: '2030-10-28', start: '09:00', end: '17:00' }, // Mon (would make 4 days)
-    { date: '2030-10-30', start: '18:00', end: '08:00' }, // Wed night shoot, back Thu morning
+  const ranges = [
+    { startDate: '2030-10-25', startTime: '09:00', endDate: '2030-10-27', endTime: '17:00' }, // Fri → Sun
+    { startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-28', endTime: '17:00' }, // Mon
+    { startDate: '2030-10-30', startTime: '18:00', endDate: '2030-10-31', endTime: '08:00' }, // Wed night → Thu morning
   ];
   storage['c2presets.presets'] = JSON.stringify({ Lights: { category: 'Media Arts Equipment', slots: [
     { options: [{ id: ID.arri1, name: 'Arri Softbank 1x650w 2x150w Three Light Kit #1 DD4' }, { id: ID.arri3, name: 'Arri Softbank 1x650W 2x150W 3 Light Kit #3 DD4' }] },
   ] } });
   storage['c2presets.ui'] = JSON.stringify({ current: 'Lights', open: true, showDays: true });
-  storage['c2presets.schedule'] = JSON.stringify({ days, merge: true });
+  storage['c2presets.schedule'] = JSON.stringify({ ranges });
   p = loadPage();
-  const listed = () => [...p.root.querySelectorAll('ol.bookings > li')].map((li) => li.textContent);
-  check(listed().join(' | ') === 'Fri 10/25 9:00 AM → Sun 10/27 5:00 PM (3 shoot days) | Mon 10/28 9:00 AM → 5:00 PM | Wed 10/30 6:00 PM → Thu 10/31 8:00 AM',
-    'merges Fri–Sun, keeps Mon separate (3-day max), and treats an earlier return time as next day');
-  p.root.querySelector('label.muted input[type=checkbox]').click();
-  check(listed().length === 5, 'turning merge off gives one booking per day');
-  p.root.querySelector('label.muted input[type=checkbox]').click();
+  const summaries = () => [...p.root.querySelectorAll('.range > .muted')].map((d) => d.textContent);
+  check(summaries().join(' | ') === 'Fri 10/25 9:00 AM → Sun 10/27 5:00 PM · 3 days | Mon 10/28 9:00 AM → 5:00 PM · 1 day | Wed 10/30 6:00 PM → Thu 10/31 8:00 AM · 2 days',
+    'each range shows as one booking with its length');
   check(!!p.button('Book 3 bookings'), 'offers to book 3 bookings');
-  p.save();
-  storage['c2presets.schedule'] = JSON.stringify({ days: [{ date: '2020-01-06', start: '09:00', end: '17:00' }], merge: true });
+  check(p.root.querySelectorAll('.range input[type=date]').length === 6, 'each range has a pickup date and a return date');
+
+  const dateInput = (row, which) => p.root.querySelectorAll('.range')[row].querySelectorAll('input[type=date]')[which];
+  const setInput = (input, v) => { input.value = v; input.dispatchEvent(new p.w.Event('change')); };
+  setInput(dateInput(1, 0), '2030-11-04');
+  let saved = p.get('schedule').ranges[1];
+  check(saved.startDate === '2030-11-04' && saved.endDate === '2030-11-04', 'moving a pickup date moves its return date too');
+  setInput(dateInput(1, 1), '2030-11-08');
+  check(p.root.querySelectorAll('.range')[1].textContent.includes('⚠ longer than the 3-day maximum'), 'warns when a range is over 3 days');
+  setInput(dateInput(1, 1), '2030-11-03');
+  check(p.root.querySelectorAll('.range')[1].textContent.includes('⚠ return is not after pickup') && p.button('Book 3 bookings').disabled,
+    'a return before pickup is flagged and blocks booking');
+
+  p.button('+ Date range').click();
+  saved = p.get('schedule').ranges[3];
+  check(saved.startDate === '2030-11-01' && saved.endDate === '2030-11-02' && saved.startTime === '18:00' && saved.endTime === '08:00',
+    '+ Date range starts the day after the last return, with the same length and times');
+
+  resetStorage();
+  storage['c2presets.schedule'] = JSON.stringify({ days: [{ date: '2030-10-25', start: '09:00', end: '17:00' }, { date: '2030-10-30', start: '18:00', end: '08:00' }], merge: true });
   p = loadPage();
-  check(p.root.textContent.includes('⚠ starts in the past'), 'warns about a booking in the past');
+  check(JSON.stringify(p.get('schedule').ranges) === JSON.stringify([
+    { startDate: '2030-10-25', startTime: '09:00', endDate: '2030-10-25', endTime: '17:00' },
+    { startDate: '2030-10-30', startTime: '18:00', endDate: '2030-10-31', endTime: '08:00' },
+  ]), 'v0.3 shoot days are converted to ranges');
+
+  resetStorage();
+  storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2020-01-06', startTime: '09:00', endDate: '2020-01-06', endTime: '17:00' }] });
+  storage['c2presets.ui'] = JSON.stringify({ open: true, showDays: true });
+  storage['c2presets.presets'] = JSON.stringify({ X: { category: '', slots: [{ options: [{ id: '900', name: 'Tripod' }] }] } });
+  p = loadPage();
+  check(p.root.textContent.includes('⚠ starts in the past'), 'warns about a range in the past');
 
   console.log('Booking run: booking 1');
   resetStorage();
@@ -227,7 +250,7 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
     { options: [{ id: ID.arri1, name: 'Arri Softbank 1x650w 2x150w Three Light Kit #1 DD4' }, { id: ID.arri3, name: 'Arri Softbank 1x650W 2x150W 3 Light Kit #3 DD4' }] },
   ] } });
   storage['c2presets.ui'] = JSON.stringify({ current: 'Lights', open: true, showDays: true });
-  storage['c2presets.schedule'] = JSON.stringify({ days, merge: true });
+  storage['c2presets.schedule'] = JSON.stringify({ ranges });
   p = loadPage({ booked: [ID.arri1] });
   p.button('Book 3 bookings').click();
   await until(() => p.postbacks.length);
