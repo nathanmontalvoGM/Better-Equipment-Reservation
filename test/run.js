@@ -8,6 +8,7 @@ const { JSDOM, VirtualConsole } = require('jsdom');
 const FIXTURES = {
   resource: fs.readFileSync(path.join(__dirname, 'fixtures/select-resource.html'), 'utf8'),
   time: fs.readFileSync(path.join(__dirname, 'fixtures/select-time.html'), 'utf8'),
+  clash: fs.readFileSync(path.join(__dirname, 'fixtures/select-time-clash.html'), 'utf8'), // rejected Update
 };
 const SCRIPT = fs.readFileSync(path.join(__dirname, '../src/connect2-gear-presets.user.js'), 'utf8');
 const URL = 'https://mtsu.getconnect2.com/wizard/multiresource.aspx';
@@ -32,19 +33,29 @@ async function until(fn, ms = 3000) { const t = Date.now(); while (!fn() && Date
 let storage = {};
 const resetStorage = () => { storage = {}; };
 
-// Fake Connect2 availability endpoint: `booked` ids come back as errors.
-function fakeFetch(booked, calls) {
+// "10/28/2030" → "Monday, 28 Oct 2030", the way Connect2 writes dates in availability lists
+function longDate(mdyText) {
+  const [m, d, y] = mdyText.split('/').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const day = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dt.getUTCDay()];
+  const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][m - 1];
+  return `${day}, ${d} ${mon} ${y}`;
+}
+
+// Fake Connect2 availability endpoint, shaped like the real responses:
+// `booked` ids come back as errors; `limits[id] = { collect, ret }` sets the collect-from / return-by times.
+function fakeFetch(booked, limits, calls) {
   return async (url) => {
     const params = new URLSearchParams(String(url).split('?')[1]);
     calls.push(Object.fromEntries(params));
     const id = params.get('resourceId');
-    const isBooked = booked.includes(id);
-    return {
-      ok: true,
-      json: async () => (isBooked
-        ? { TypeName: 'error', Title: 'Not available', Text: 'Booked 10/20 – 10/22', List: [] }
-        : { TypeName: 'success', Title: 'Available', Text: '', List: [] }),
-    };
+    if (booked.includes(id)) {
+      return { ok: true, json: async () => ({ Type: 1, TypeName: 'error', Title: 'Not available', Text: 'Booked 10/20 – 10/22', List: [] }) };
+    }
+    const lim = limits[id] || {};
+    const start = params.get('start'), end = params.get('end');
+    const list = start ? ['Collect from: ' + (lim.collect || '8:00 AM'), longDate(start), 'Return by: ' + (lim.ret || '4:30 PM'), longDate(end)] : [];
+    return { ok: true, json: async () => ({ Type: 3, TypeName: 'success', Title: 'Available', Text: '', List: list }) };
   };
 }
 
@@ -52,7 +63,7 @@ function fakeFetch(booked, calls) {
  * Load the page once. `edit` can change the HTML first (e.g. basket count or dates).
  * Clicks on Connect2's own submit buttons are recorded and blocked instead of posting back.
  */
-function loadPage({ page = 'resource', edit, prompts = [], booked = [] } = {}) {
+function loadPage({ page = 'resource', edit, prompts = [], booked = [], limits = {} } = {}) {
   const vc = new VirtualConsole();
   vc.on('jsdomError', (e) => { if (!/navigation|submit/i.test(e.message)) console.log('  jsdom:', e.message); });
   const html = FIXTURES[page];
@@ -60,19 +71,20 @@ function loadPage({ page = 'resource', edit, prompts = [], booked = [] } = {}) {
   const w = dom.window;
   for (const [k, v] of Object.entries(storage)) w.localStorage.setItem(k, v);
   w.prompt = () => prompts.shift() || null;
-  w.confirm = () => true;
+  const confirms = [];
+  w.confirm = (m) => { confirms.push(m); return true; };
   w.alert = (m) => console.log('  alert:', m);
   const fetches = [];
-  w.fetch = fakeFetch(booked, fetches);
+  w.fetch = fakeFetch(booked, limits, fetches);
   const postbacks = [];
   w.document.addEventListener('click', (e) => {
     const t = e.target;
-    if (t.matches && t.matches('input[type=submit], input[type=button], .fuzzySearch button')) { postbacks.push(t.id || 'search'); e.preventDefault(); }
+    if (t.matches && t.matches('input[type=submit], input[type=button], .fuzzySearch button, a[id*="suggestionLink"]')) { postbacks.push(t.id || 'search'); e.preventDefault(); }
   }, true);
   w.eval(SCRIPT);
   const root = w.document.getElementById('c2presets-host').shadowRoot;
   return {
-    w, root, postbacks, fetches,
+    w, root, postbacks, fetches, confirms,
     field: (name) => w.document.querySelector(`input[id$="editResourceBookingsTime_datetime_${name}_textbox"]`).value,
     button: (label) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === label),
     toggle: (id) => w.document.querySelector(`.resource-availability[data-id="${id}"]`).closest('li').querySelector('.c2p-toggle'),
@@ -254,7 +266,8 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   p = loadPage({ booked: [ID.arri1] });
   p.button('Book 3 bookings').click();
   await until(() => p.postbacks.length);
-  check(p.fetches.length && p.fetches.every((f) => f.start === '10/25/2030' && f.end === '10/27/2030'), 'checks availability for booking 1\'s own dates');
+  const checkedStarts = [...new Set(p.fetches.map((f) => f.start + '–' + f.end))].join(', ');
+  check(checkedStarts === '10/25/2030–10/27/2030, 10/28/2030–10/28/2030, 10/30/2030–10/31/2030', 'checks every booking\'s own dates before starting: ' + checkedStarts);
   check(/ctl11_bookBtn$/.test(p.postbacks[0] || ''), 'Kit #1 is booked those days, so it adds Kit #3');
   check(p.get('run').stage === 'basket', 'run is in the basket stage');
   p.save();
@@ -301,6 +314,74 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   p.button('Stop run') || p.button('End run');
   (p.button('Stop run') || p.button('End run')).click();
   check(p.get('run') === null, 'the run can be ended');
+
+  console.log('Checking ranges before a run');
+  resetStorage();
+  // Mon 10/28/2030 9:00 AM → Wed 10/30/2030 5:00 PM; cage closes 4:30 PM; the 300D is due back 2:00 PM Wed;
+  // the tripod can't be collected until 10:00 AM Mon; Arri Kit #1 is due back early but Kit #3 is free.
+  const limits = { [ID.light300d]: { ret: '2:00 PM' }, [ID.tripod]: { collect: '10:00 AM' }, [ID.arri1]: { ret: '12:00 PM' }, [ID.arri3]: { ret: '5:30 PM' } };
+  storage['c2presets.presets'] = JSON.stringify({ Kit: { category: 'Media Arts Equipment', slots: [
+    { options: [{ id: ID.light300d, name: 'Aputure 300D' }] },
+    { options: [{ id: ID.tripod, name: '3 Pod Tripod' }] },
+    { options: [{ id: ID.arri1, name: 'Arri Kit #1' }, { id: ID.arri3, name: 'Arri Kit #3' }] },
+  ] } });
+  storage['c2presets.ui'] = JSON.stringify({ current: 'Kit', open: true, showDays: true });
+  storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-30', endTime: '17:00' }] });
+  p = loadPage({ limits });
+  p.button('Check ranges').click();
+  await until(() => p.root.querySelector('.report, .okline'), 6000);
+  const report = () => (p.root.querySelector('.range .report') || { textContent: '' }).textContent;
+  check(report().includes('✗ Aputure 300D: return by 2:00 PM Wed 10/30'), 'flags an item due back before the return time');
+  check(report().includes('✗ 3 Pod Tripod: collect from 10:00 AM Mon 10/28'), 'flags an item not ready by the pickup time');
+  check(!report().includes('Arri'), 'a slot is fine when one of its alternates fits');
+  check(!!p.button('Use Mon 10/28 10:00 AM → Wed 10/30 2:00 PM'), 'offers the narrower times that would fit everything');
+  p.button('Use Mon 10/28 10:00 AM → Wed 10/30 2:00 PM').click();
+  const fixed = p.get('schedule').ranges[0];
+  check(fixed.startTime === '10:00' && fixed.endTime === '14:00' && fixed.endDate === '2030-10-30', 'one click changes the range to those times');
+  await until(() => p.root.querySelector('.okline'), 6000);
+  check(!!p.root.querySelector('.okline'), 'and the re-check comes back clear');
+  p.save();
+
+  console.log('Starting a run warns about problems first');
+  storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-30', endTime: '17:00' }] });
+  p = loadPage({ limits });
+  p.button('Book 1 booking').click();
+  await until(() => p.postbacks.length, 6000);
+  const startMsg = p.confirms.find((m) => m.startsWith('Make 1 booking')) || '';
+  check(/⚠ Aputure 300D: return by 2:00 PM/.test(startMsg) && /probably reject/.test(startMsg), 'the start confirmation lists the problems');
+  check(/ctl04_bookBtn$/.test(p.postbacks[0] || ''), 'starting anyway proceeds (you chose OK)');
+  p.save();
+  p = loadPage({ edit: withBasket(1), limits }); await wait(); // 300D added; next is the tripod
+  p.save();
+  p = loadPage({ edit: withBasket(2), limits }); await wait(); // tripod added; next is the Arri slot
+  check(/ctl11_bookBtn$/.test(p.postbacks[0] || ''), 'ranks Kit #3 first because Kit #1 is due back too early');
+  {
+    const q = p.get('queue');
+    check(q && q.items[2].fits[0].kind === 'ok' && q.items[0].fits[0].kind === 'hours', 'remembers which units fit the times');
+  }
+
+  console.log('Connect2 rejects the times: reasons and suggestions');
+  resetStorage();
+  storage['c2presets.presets'] = JSON.stringify({ Catio: { category: 'Media Arts Equipment', slots: [{ options: [{ id: '1', name: 'Canon C100 Mark ii A3-A6' }] }] } });
+  storage['c2presets.ui'] = JSON.stringify({ current: 'Catio', open: true });
+  storage['c2presets.run'] = JSON.stringify({ preset: 'Catio', b: 0, stage: 'time', problem: '', notes: [],
+    bookings: [{ startDate: '2026-10-26', startTime: '09:00', endDate: '2026-10-28', endTime: '17:00', days: 3 }] });
+  p = loadPage({ page: 'clash' }); await wait();
+  const problem = p.get('run').problem;
+  check(p.get('run').stage === 'handoff' && p.postbacks.length === 0, 'stops instead of pressing anything');
+  check(problem.includes('Canon C100 Mark ii A3-A6: outside cage hours'), 'explains cage-hours clashes by item');
+  check(problem.includes('Canon EF 24-105mm f/4L IS USM Lens: booked by someone else during that time'), 'explains booking clashes by item, including ones Connect2 hides behind "Show more"');
+  const sugButtons = [...p.root.querySelectorAll('.sugs button')].map((b) => b.textContent);
+  check(sugButtons.length === 6 && sugButtons[0] === 'Mon 10/26 9:00 AM → Wed 10/28 4:30 PM' && sugButtons[4] === 'Mon 11/2 2:30 PM → Thu 11/5 12:30 PM',
+    'shows Connect2\'s 6 suggested times as buttons');
+  check(p.root.querySelector('.run').textContent.includes('Pick one of Connect2\'s suggested times'), 'tells you to pick a suggestion (not "Terms & Conditions")');
+  p.button('Mon 10/26 9:00 AM → Wed 10/28 2:00 PM').click();
+  check(/suggestions_ctl04_suggestionLink$/.test(p.postbacks[0] || ''), 'clicking a suggestion clicks Connect2\'s own suggestion link');
+  const after = p.get('run');
+  check(after.stage === 'time' && after.bookings[0].endTime === '14:00' && after.bookings[0].endDate === '2026-10-28', 'and the run now expects those times');
+  p.save();
+  p = loadPage({ page: 'time', edit: both(timeValues('10/26/2026', '10/28/2026'), enableNext) }); await wait();
+  check(/wizardBannerRight_btnNext$/.test(p.postbacks[0] || '') && p.get('run').stage === 'handoff', 'once Connect2 accepts the suggestion, it presses Next');
 
   console.log('Saved pages with a leftover panel');
   p = loadPage({ page: 'time', edit: (h) => h.replace('</form>', '</form><div id="c2presets-host"></div>') });

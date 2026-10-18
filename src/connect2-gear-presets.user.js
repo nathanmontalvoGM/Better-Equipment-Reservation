@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Connect2 Gear Presets (MTSU)
 // @namespace    nathan.c2presets
-// @version      0.4.0
+// @version      0.5.0
 // @description  Gear presets for MTSU's Connect2 checkout: add a whole preset to your basket in one click, check its availability, and book it for several date ranges.
 // @homepageURL  https://github.com/nathanmontalvoGM/Better-Equipment-Reservation
 // @downloadURL  https://raw.githubusercontent.com/nathanmontalvoGM/Better-Equipment-Reservation/main/src/connect2-gear-presets.user.js
@@ -24,7 +24,11 @@
  *   "needs permission" are shown in the preset.
  * - Date ranges: list each pickup → return you need a preset for, and the script makes one
  *   booking per range (Connect2 allows up to 3 days). For each booking it adds the
- *   gear, fills in the times, presses Next, and stops at Terms & Conditions. You finish
+ *   gear, fills in the times, presses Next, and stops at Terms & Conditions.
+ * - Before a run, every range is checked against Connect2's "collect from" / "return by"
+ *   limits (cage hours and other people's bookings), with a one-click fix when narrowing
+ *   the times would work. If Connect2 still rejects a time, its reasons and suggested
+ *   times are shown, and picking a suggestion continues the run. You finish
  *   Terms, Special Requests, Verify and Complete yourself, then start the next booking.
  */
 
@@ -164,10 +168,21 @@
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
       if (d.kind === 'range') {
+        // List looks like ["Collect from: 8:00 AM", "Monday, 26 Oct 2026", "Return by: 4:30 PM", "Wednesday, 28 Oct 2026"]
+        const list = Array.isArray(data.List) ? data.List.map((x) => clean(stripHtml(String(x)))) : [];
+        const limit = (prefix) => {
+          const i = list.findIndex((x) => x.toLowerCase().startsWith(prefix));
+          const time = i >= 0 ? parseTime12(list[i]) : null;
+          return time ? { time, date: parseLongDate(list[i + 1]) } : null;
+        };
+        const collect = limit('collect from'), ret = limit('return by');
+        const limits = [collect && 'collect from ' + time12(collect.time) + (collect.date ? ' ' + shortDay(collect.date) : ''),
+          ret && 'return by ' + time12(ret.time) + (ret.date ? ' ' + shortDay(ret.date) : '')].filter(Boolean).join(', ');
         result = {
           label: data.Title || data.TypeName || '?',
           kind: data.TypeName === 'error' ? 'bad' : data.TypeName === 'warning' ? 'limited' : 'ok',
-          detail: stripHtml(data.Text),
+          detail: [stripHtml(data.Text), limits].filter(Boolean).join(' · '),
+          collect, ret,
         };
       } else {
         result = {
@@ -185,21 +200,39 @@
     return result;
   }
 
-  // Check each slot's units in order, stopping at the first free one.
-  async function checkSlots(p, d) {
+  // Does a unit's availability fit a booking's actual times? Connect2's range check is per day, but it
+  // says when the unit can be collected on the first day and must be back on the last day: that covers
+  // cage hours and other people's bookings that start or end mid-day.
+  // Returns { kind: 'ok'|'hours'|'limited'|'bad'|'unknown', why }.
+  function fitFor(r, b) {
+    if (!r) return { kind: 'unknown', why: 'not checked' };
+    if (r.kind !== 'ok') return { kind: r.kind, why: r.kind === 'unknown' ? 'couldn\'t check' : r.kind === 'limited' ? 'only partly free' : 'not free' };
+    if (!b || !b.startTime) return { kind: 'ok', why: '' };
+    const problems = [];
+    if (r.collect && minutesAt(b.startDate, b.startTime) < minutesAt(r.collect.date || b.startDate, r.collect.time)) {
+      problems.push('collect from ' + time12(r.collect.time) + ' ' + shortDay(r.collect.date || b.startDate));
+    }
+    if (r.ret && minutesAt(b.endDate, b.endTime) > minutesAt(r.ret.date || b.endDate, r.ret.time)) {
+      problems.push('return by ' + time12(r.ret.time) + ' ' + shortDay(r.ret.date || b.endDate));
+    }
+    return problems.length ? { kind: 'hours', why: problems.join(', ') } : { kind: 'ok', why: '' };
+  }
+
+  // Check each slot's units in order, stopping at the first one that fits.
+  async function checkSlots(p, d, booking) {
     for (const slot of p.slots) {
       for (const o of slot.options) {
         const r = await fetchAvailability(o.id, d);
-        if (r.kind === 'ok') break;
+        if (fitFor(r, booking).kind === 'ok') break;
       }
     }
   }
 
-  const RANK = { ok: 0, limited: 1, unknown: 2, bad: 3 };
-  function orderOptions(options, d) {
+  const RANK = { ok: 0, limited: 1, unknown: 2, hours: 2.5, bad: 3 };
+  function orderOptions(options, d, booking) {
     if (!d) return options.slice();
     return options
-      .map((o, i) => ({ o, i, r: RANK[(availFor(d, o.id) || { kind: 'unknown' }).kind] }))
+      .map((o, i) => ({ o, i, r: RANK[fitFor(availFor(d, o.id), booking).kind] }))
       .sort((a, b) => a.r - b.r || a.i - b.i)
       .map((x) => x.o);
   }
@@ -233,6 +266,29 @@
   const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const shortDay = (ymd) => WEEKDAYS[new Date(ymdToUtc(ymd)).getUTCDay()] + ' ' + Number(ymd.slice(5, 7)) + '/' + Number(ymd.slice(8, 10));
   const todayYmd = () => { const t = new Date(); return t.getFullYear() + '-' + pad(t.getMonth() + 1) + '-' + pad(t.getDate()); };
+  const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+  // "Monday, 26 Oct 2026" → '2026-10-26'
+  function parseLongDate(t) {
+    const m = String(t || '').match(/(\d{1,2})\s+([A-Za-z]{3})[a-z]*\.?\s+(\d{4})/);
+    const mon = m && MONTHS[m[2].toLowerCase()];
+    return mon ? m[3] + '-' + pad(mon) + '-' + pad(m[1]) : null;
+  }
+  // "Return by: 4:30 PM" → '16:30'
+  function parseTime12(t) {
+    const m = String(t || '').match(/(\d{1,2}):(\d{2})\s*([AP])\.?M/i);
+    if (!m) return null;
+    return pad((Number(m[1]) % 12) + (/p/i.test(m[3]) ? 12 : 0)) + ':' + m[2];
+  }
+  // "11/2/2026 2:30 PM" → { date: '2026-11-02', time: '14:30' }
+  function parseMdyTime(t) {
+    const m = String(t || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}:\d{2}\s*[AP]\.?M)/i);
+    return m ? { date: m[3] + '-' + pad(m[1]) + '-' + pad(m[2]), time: parseTime12(m[4]) } : null;
+  }
+  // Does a date box's "10/26/2026" (or "11/2/2026") mean this YYYY-MM-DD?
+  function sameMdy(text, ymd) {
+    const m = String(text || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    return !!m && m[3] + '-' + pad(m[1]) + '-' + pad(m[2]) === ymd;
+  }
   const isYmd = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || '');
   const isHm = (v) => /^\d{2}:\d{2}$/.test(v || '');
   const validRange = (r) => !!r && isYmd(r.startDate) && isHm(r.startTime) && isYmd(r.endDate) && isHm(r.endTime);
@@ -276,7 +332,14 @@
   // Same shape pageDates() returns, so availability checks and the queue can use it.
   const bookingDates = (b) => ({ kind: 'range', start: mdy(b.startDate), end: mdy(b.endDate), label: mdy(b.startDate) + ' → ' + mdy(b.endDate) });
 
+  // Results of "Check ranges", by range index, for the preset named in rangeReportsFor.
+  let rangeReports = {};
+  let rangeReportsFor = '';
+  let checkingRanges = false;
+  const clearReports = () => { rangeReports = {}; rangeReportsFor = ''; };
+
   function addRange() {
+    clearReports();
     const last = schedule.ranges[schedule.ranges.length - 1];
     if (validRange(last)) {
       const startDate = addDays(last.endDate, 1); // day after the last return, same length and times
@@ -291,6 +354,7 @@
   function updateRange(i, field, value) {
     const r = schedule.ranges[i];
     if (!r) return;
+    clearReports();
     // Moving the pickup date moves the return date with it, keeping the range's length.
     if (field === 'startDate' && isYmd(value) && isYmd(r.startDate) && isYmd(r.endDate)) {
       r.endDate = addDays(r.endDate, daysBetween(r.startDate, value));
@@ -299,7 +363,75 @@
     saveSchedule(); render();
   }
 
-  function removeRange(i) { schedule.ranges.splice(i, 1); saveSchedule(); render(); }
+  function removeRange(i) { clearReports(); schedule.ranges.splice(i, 1); saveSchedule(); render(); }
+
+  // ---------- checking date ranges before a run ----------
+  const laterOf = (a, b) => (minutesAt(a.date, a.time) >= minutesAt(b.date, b.time) ? a : b);
+  const earlierOf = (a, b) => (minutesAt(a.date, a.time) <= minutesAt(b.date, b.time) ? a : b);
+
+  // For each booking: which slots have no unit that fits, and narrower times that would fit, if any.
+  async function preflight(p, bookings) {
+    const reports = {};
+    for (const b of bookings) {
+      if (b.invalid) continue;
+      const d = bookingDates(b);
+      await checkSlots(p, d, b);
+      let start = { date: b.startDate, time: b.startTime };
+      let end = { date: b.endDate, time: b.endTime };
+      let fixable = true;
+      const issues = [];
+      for (const slot of p.slots) {
+        const units = slot.options.map((o) => { const r = availFor(d, o.id); return { o, r, f: fitFor(r, b) }; });
+        if (units.some((u) => u.f.kind === 'ok')) continue;
+        issues.push(slot.options[0].name + ': ' + units[0].f.why + (units.length > 1 ? ' (alternates too)' : ''));
+        // A time-only problem can be fixed by narrowing the booking to the unit with the most room.
+        let best = null;
+        for (const u of units.filter((x) => x.f.kind === 'hours')) {
+          const s = u.r.collect ? laterOf({ date: b.startDate, time: b.startTime }, { date: u.r.collect.date || b.startDate, time: u.r.collect.time }) : { date: b.startDate, time: b.startTime };
+          const e = u.r.ret ? earlierOf({ date: b.endDate, time: b.endTime }, { date: u.r.ret.date || b.endDate, time: u.r.ret.time }) : { date: b.endDate, time: b.endTime };
+          const room = minutesAt(e.date, e.time) - minutesAt(s.date, s.time);
+          if (room > 0 && (!best || room > best.room)) best = { s, e, room };
+        }
+        if (!best) { fixable = false; continue; }
+        start = laterOf(start, best.s);
+        end = earlierOf(end, best.e);
+      }
+      const fix = fixable && issues.length && minutesAt(end.date, end.time) > minutesAt(start.date, start.time)
+        ? { startDate: start.date, startTime: start.time, endDate: end.date, endTime: end.time } : null;
+      reports[b.index] = { ok: !issues.length, issues, fix };
+    }
+    return reports;
+  }
+
+  async function checkRanges() {
+    const p = presets[ui.current];
+    if (!p || !p.slots.length) { setStatus('Pick a preset with items first.'); return null; }
+    const bookings = computeBookings(schedule.ranges).filter((b) => !b.invalid);
+    if (!bookings.length) { setStatus('Add at least one date range first.'); return null; }
+    if (checkingRanges) return null;
+    checkingRanges = true;
+    setStatus('Checking "' + ui.current + '" for ' + bookings.length + (bookings.length > 1 ? ' date ranges…' : ' date range…'));
+    try {
+      rangeReports = await preflight(p, bookings);
+      rangeReportsFor = ui.current;
+    } finally {
+      checkingRanges = false;
+    }
+    const bad = Object.values(rangeReports).filter((r) => !r.ok).length;
+    setStatus(bad
+      ? bad + ' of ' + bookings.length + ' date range(s) have problems. See the notes under each range.'
+      : 'Everything in "' + ui.current + '" is free for ' + (bookings.length > 1 ? 'all ' + bookings.length + ' date ranges.' : 'that date range.'));
+    return rangeReports;
+  }
+
+  function applyFix(i) {
+    const fix = rangeReports[i] && rangeReports[i].fix;
+    if (!fix || !schedule.ranges[i]) return;
+    Object.assign(schedule.ranges[i], fix);
+    saveSchedule();
+    clearReports();
+    checkRanges(); // same dates are cached, so this is quick
+  }
 
   // ---------- booking run across date ranges (survives page reloads) ----------
   // run: { preset, bookings, b, stage: 'basket'|'create'|'time'|'handoff', problem, notes: [] }
@@ -314,7 +446,7 @@
       .map((e) => clean(e.textContent)).filter(Boolean).join(' ');
   }
 
-  function startRun() {
+  async function startRun() {
     const p = presets[ui.current];
     const bookings = computeBookings(schedule.ranges);
     if (!p || !p.slots.length) return setStatus('Pick a preset with items first.');
@@ -324,10 +456,16 @@
     if (p.category && category() && p.category !== category()) {
       if (!confirm('This preset was made in "' + p.category + '", but you are in "' + category() + '". Continue anyway?')) return;
     }
-    const warned = bookings.filter((b) => b.warnings.length);
-    const lines = bookings.map((b, i) => (i + 1) + '. ' + bookingLabel(b) + (b.warnings.length ? '  ⚠ ' + b.warnings.join('; ') : ''));
+    const reports = await checkRanges();
+    if (!reports || getRun()) return;
+    const problems = bookings.filter((b) => b.warnings.length || (reports[b.index] && !reports[b.index].ok));
+    const lines = bookings.map((b, i) => {
+      const r = reports[b.index];
+      const notes = b.warnings.concat(r && !r.ok ? r.issues : []);
+      return (i + 1) + '. ' + bookingLabel(b) + (notes.length ? '\n     ⚠ ' + notes.join('\n     ⚠ ') : '');
+    });
     if (!confirm('Make ' + bookings.length + ' booking(s) of "' + ui.current + '"?\n\n' + lines.join('\n') +
-      (warned.length ? '\n\nSome bookings have warnings; Connect2 may reject them.' : '') +
+      (problems.length ? '\n\nSome bookings have problems, and Connect2 will probably reject them as entered. Cancel to fix them first (see the notes under each range).' : '') +
       '\n\nFor each booking the script adds the gear, fills in the times and stops at Terms & Conditions. You finish each booking yourself.')) return;
     saveRun({
       preset: ui.current,
@@ -345,7 +483,7 @@
     if (n > 0 && !confirm('Your basket already has ' + n + ' item(s). They\'ll be included in booking ' + (run.b + 1) + '. Continue?')) return;
     run.stage = 'basket'; run.problem = ''; run.notes[run.b] = '';
     saveRun(run);
-    startQueue(run.preset, { dates: bookingDates(run.bookings[run.b]), run: true });
+    startQueue(run.preset, { dates: bookingDates(run.bookings[run.b]), booking: run.bookings[run.b], run: true });
   }
 
   function nextBooking(step) {
@@ -369,6 +507,44 @@
     run.stage = 'create';
     saveRun(run); render();
     btn.click(); // "Create booking" → Select time
+  }
+
+  // Connect2's explanation and suggested times after it rejects an Update on Select time.
+  function clashInfo() {
+    const box = qs('[id$="MainWizardContent_suggestionsDv"]');
+    if (!box) return null;
+    const reasons = qsa('li', box).filter((li) => !/ItemsList$/.test(li.id || '')).map((li) => {
+      const ps = li.querySelectorAll('p');
+      const title = clean(ps[0] ? ps[0].textContent : '');
+      const msg = clean(ps[1] ? ps[1].textContent : li.textContent);
+      // Case-sensitive on purpose: item names can contain words like "IS" ("f/4L IS USM Lens").
+      const item = (msg.match(/[Bb]ooking of (.+?) (?:must|would|cannot|can not|is not|has been|will not) /) || [])[1];
+      const why = /open times/i.test(title) ? 'outside cage hours'
+        : /other bookings/i.test(title) ? 'booked by someone else during that time'
+        : title.replace(/^clashes with /i, '');
+      return item ? item + ': ' + why : clean(title + ' ' + msg);
+    }).filter(Boolean);
+    const suggestions = qsa('.suggestions-list a[id*="suggestionLink"]', box).map((a) => {
+      const text = clean(a.textContent);
+      const [from, to] = text.split(/\s+-\s+/);
+      const s = parseMdyTime(from), e = parseMdyTime(to);
+      return s && e ? { id: a.id, startDate: s.date, startTime: s.time, endDate: e.date, endTime: e.time } : null;
+    }).filter(Boolean);
+    return reasons.length || suggestions.length ? { reasons, suggestions } : null;
+  }
+
+  // Use one of Connect2's suggested times: its own link sets the times and posts back,
+  // then the run checks the result and presses Next as usual.
+  function pickSuggestion(sug) {
+    const run = getRun();
+    const link = document.getElementById(sug.id);
+    if (!run || !link) return;
+    run.bookings[run.b] = { startDate: sug.startDate, startTime: sug.startTime, endDate: sug.endDate, endTime: sug.endTime, days: daysBetween(sug.startDate, sug.endDate) + 1 };
+    run.stage = 'time';
+    run.problem = '';
+    saveRun(run);
+    render();
+    link.click();
   }
 
   function setField(name, value) {
@@ -402,26 +578,29 @@
       return;
     }
     // stage 'time': the Update postback has come back
+    const clash = clashInfo();
     const errs = timeErrors();
     const next = nextBtn();
     const sd = timeField('startDate'), ed = timeField('endDate');
-    const datesStuck = sd && ed && sd.value === mdy(bk.startDate) && ed.value === mdy(bk.endDate);
-    if (errs || !datesStuck || !next || next.disabled) {
+    const datesStuck = sd && ed && sameMdy(sd.value, bk.startDate) && sameMdy(ed.value, bk.endDate);
+    if (clash || errs || !datesStuck || !next || next.disabled) {
       return handoff(run, 'Connect2 didn\'t accept ' + bookingLabel(bk) +
-        (errs ? ': ' + errs : !datesStuck ? ' (the dates didn\'t stick)' : ' (Next is still disabled; an item may be unavailable or the cage closed then)') +
-        '. Adjust the times here, press Update and Next yourself, then finish the booking.');
+        (clash && clash.reasons.length ? ': ' + clash.reasons.join('; ')
+          : errs ? ': ' + errs
+          : !datesStuck ? ' (the dates didn\'t stick)'
+          : ' (Next is still disabled; an item may be unavailable or the cage closed then)') + '.');
     }
     handoff(run, '');
     next.click(); // → Terms & Conditions; the rest is up to you
   }
 
   // ---------- add-to-basket queue (survives page reloads) ----------
-  // queue: { preset, items: [{ options, kinds, first, firstKind }], i, opt, phase: 'find'|'searched'|'searched2'|'clicked',
+  // queue: { preset, items: [{ options, fits, first, firstFit }], i, opt, phase: 'find'|'searched'|'searched2'|'clicked',
   //          before, loadsKey, loads, skipped: [], results: [{ ok, line }], note }
   const MAX_LOADS_PER_OPTION = 6;
   let starting = false;
 
-  // opts.dates overrides the page's Availability dates; opts.run marks a shoot-day booking run.
+  // opts.dates overrides the page's Availability dates; opts.booking adds times to fit; opts.run marks a booking run.
   async function startQueue(name, opts = {}) {
     const p = presets[name];
     if (!p || !p.slots.length) return setStatus('That preset is empty.');
@@ -436,14 +615,14 @@
       let note = '';
       if (d) {
         setStatus('Finding free units for ' + d.label + '…');
-        await checkSlots(p, d);
+        await checkSlots(p, d, opts.booking);
       } else if (p.slots.some((s) => s.options.length > 1)) {
         note = 'No dates were set, so first choices were used. To let alternates replace booked units, set Collect/Return and press Go before adding.';
       }
       const items = p.slots.map((s) => {
-        const options = orderOptions(s.options, d);
-        const kindOf = (o) => (availFor(d, o.id) || { kind: d ? 'unknown' : 'nodates' }).kind;
-        return { options, kinds: options.map(kindOf), first: s.options[0], firstKind: kindOf(s.options[0]) };
+        const options = orderOptions(s.options, d, opts.booking);
+        const fitOf = (o) => (d ? fitFor(availFor(d, o.id), opts.booking) : { kind: 'nodates', why: '' });
+        return { options, fits: options.map(fitOf), first: s.options[0], firstFit: fitOf(s.options[0]) };
       });
       store.set('queue', { preset: name, items, i: 0, opt: 0, phase: 'find', before: -1, loadsKey: '', loads: 0, skipped: [], results: [], note, run: !!opts.run });
     } finally {
@@ -508,12 +687,15 @@
         const notes = [];
         if (o.id !== it.first.id) {
           const why = q.skipped.slice();
-          if (it.firstKind === 'bad' || it.firstKind === 'limited') why.unshift(it.first.name + ' (not free for your dates)');
+          const ff = it.firstFit || {};
+          if (ff.kind === 'hours') why.unshift(it.first.name + ' (' + ff.why + ')');
+          else if (ff.kind === 'bad' || ff.kind === 'limited') why.unshift(it.first.name + ' (not free for your dates)');
           notes.push('used ' + o.name + ' instead of ' + it.first.name + (why.length ? ' — skipped ' + why.join('; ') : ''));
         }
-        const kind = it.kinds[q.opt];
-        if (kind === 'bad') notes.push(o.name + ' was added but no unit is free for your dates');
-        else if (kind === 'limited') notes.push(o.name + ' is only partly available for your dates');
+        const f = (it.fits || [])[q.opt] || {};
+        if (f.kind === 'bad') notes.push(o.name + ' was added but no unit is free for your dates');
+        else if (f.kind === 'limited') notes.push(o.name + ' is only partly available for your dates');
+        else if (f.kind === 'hours') notes.push(o.name + ' was added, but Connect2 says ' + f.why);
         q.results.push({ ok: true, line: notes.join('. ') });
       }
       nextSlot(q);
@@ -710,6 +892,10 @@
     .day input[type=date] { flex: 1.4; } .day input[type=time] { flex: 1; }
     .day .lbl { width: 46px; flex: none; font-size: 12px; color: #444; }
     .day .xspace { width: 27px; flex: none; }
+    .okline { color: #166534; font-size: 12px; }
+    .report { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
+    .report button, .sugs button { font-size: 12px; }
+    .sugs { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
     .range { border: 1px solid #e3e5e8; border-radius: 6px; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
     .run { border: 2px solid #2563eb; border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px; background: #eff6ff; }
   `;
@@ -744,6 +930,15 @@
         el('button', { class: 'x', title: 'Remove this slot', onclick: () => removeSlot(si) }, '×')));
   }
 
+  function renderReport(i) {
+    const rep = rangeReportsFor === ui.current ? rangeReports[i] : null;
+    if (!rep) return null;
+    if (rep.ok) return el('div', { class: 'okline' }, '✓ Everything in "' + ui.current + '" is free then');
+    return el('div', { class: 'report' },
+      rep.issues.map((t) => el('div', { class: 'warn' }, '✗ ' + t)),
+      rep.fix ? el('button', { onclick: () => applyFix(i) }, 'Use ' + bookingLabel(rep.fix)) : null);
+  }
+
   function renderRanges(p) {
     const wrap = el('div', { class: 'days' },
       el('button', { class: 'linkish', onclick: () => { ui.showDays = !ui.showDays; saveUi(); render(); } },
@@ -764,13 +959,15 @@
           el('input', { type: 'time', value: r.endTime, step: 1800, 'aria-label': 'Return time', onchange: (e) => updateRange(i, 'endTime', e.target.value) }),
           el('span', { class: 'xspace' })),
         b ? el('div', { class: 'muted' }, bookingLabel(b) + ' · ' + b.days + (b.days > 1 ? ' days' : ' day')) : null,
-        b && b.warnings.length ? el('div', { class: 'warn' }, '⚠ ' + b.warnings.join('; ')) : null));
+        b && b.warnings.length ? el('div', { class: 'warn' }, '⚠ ' + b.warnings.join('; ')) : null,
+        renderReport(i)));
     });
     wrap.append(el('div', { class: 'row' }, el('button', { onclick: addRange }, '+ Date range')));
     if (bookings.length) {
       wrap.append(el('div', { class: 'row' },
-        el('button', { class: 'primary', disabled: !p.slots.length || !!getRun() || !!store.get('queue', null) || !isSelectPage() || bookings.some((b) => b.invalid), onclick: startRun },
-          'Book ' + bookings.length + (bookings.length > 1 ? ' bookings' : ' booking'))));
+        el('button', { class: 'primary', disabled: !p.slots.length || !!getRun() || !!store.get('queue', null) || !isSelectPage() || checkingRanges || bookings.some((b) => b.invalid), onclick: startRun },
+          'Book ' + bookings.length + (bookings.length > 1 ? ' bookings' : ' booking')),
+        el('button', { disabled: !p.slots.length || checkingRanges || bookings.every((b) => b.invalid), onclick: checkRanges }, checkingRanges ? 'Checking…' : 'Check ranges')));
       wrap.append(el('div', { class: 'muted' }, 'Each date range is one booking (3-day maximum). Each booking stops at Terms & Conditions for you to finish.'));
     }
     return wrap;
@@ -785,10 +982,19 @@
       box.append(el('div', {}, run.stage === 'basket' ? 'Adding "' + run.preset + '" to the basket…' : 'Setting the times…'));
     } else {
       if (run.problem) box.append(el('div', { class: 'warn' }, '⚠ ' + run.problem));
+      const clash = isTimePage() && run.problem ? clashInfo() : null;
       if (isSelectPage()) {
         box.append(el('div', {}, last
           ? 'That was the last booking. Once it shows Complete, end the run.'
           : 'Once booking ' + (run.b + 1) + ' shows Complete, start the next one.'));
+      } else if (isTimePage() && run.problem) {
+        box.append(el('div', {}, clash && clash.suggestions.length
+          ? 'Pick one of Connect2\'s suggested times to continue, or change the times on this page, press Update, then Next.'
+          : 'Change the times on this page, press Update, then Next and finish the booking.'));
+        if (clash && clash.suggestions.length) {
+          box.append(el('div', { class: 'sugs' }, clash.suggestions.slice(0, 6).map((sug) =>
+            el('button', { onclick: () => pickSuggestion(sug) }, bookingLabel(sug)))));
+        }
       } else {
         box.append(el('div', {}, 'Your turn: Terms & Conditions → Special Requests → Verify → Complete.' +
           (last ? '' : ' Then open Book by Category → ' + ((presets[run.preset] || {}).category || 'your category') + ' for booking ' + (run.b + 2) + '.')));

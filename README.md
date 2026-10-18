@@ -25,7 +25,8 @@ Installing from the raw link means Tampermonkey picks up new versions automatica
   3. presses **Next** to Terms & Conditions and stops. You finish Terms, Special Requests, Verify, and Complete;
   4. back on **Book by Category → Media Arts Equipment**, the panel offers **Start booking 2 of N** (or **Redo**).
 
-  If Connect2 rejects the times (cage closed, an item unavailable, over the limit), the script stops on that page and says why, so you can adjust and continue by hand.
+  Before anything is added, every range is checked with real times (see **Check ranges** below), and the start confirmation lists any problems. If Connect2 still rejects a time on Select time, the run stops there and shows Connect2's reasons item by item (outside cage hours, booked by someone else), including the ones Connect2 hides behind "Show more". Connect2's suggested times appear as buttons: pick one and the run continues to Next. Or change the times yourself, press Update, then Next.
+- **Check ranges**: checks every date range against what Connect2 says about each unit: when it can be collected on the pickup day and when it must be back on the return day. That catches cage hours and other people's bookings that start or end partway through a day. Problems show under each range (for example "✗ Canon EF 24-105mm: return by 2:00 PM Wed 10/28"). When narrowing the times would fix everything, a button such as **Use Mon 10/26 9:00 AM → Wed 10/28 2:00 PM** applies it. Alternates count: a slot is fine if any of its units fits, and runs pick the unit that fits.
 - **Stop / Resume**: stops an add in progress. Items already added stay in your basket.
 - **Export / Import**: presets live only in the browser you made them in. Export copies them as text you can send to your crew or move to another computer.
 
@@ -33,7 +34,7 @@ Installing from the raw link means Tampermonkey picks up new versions automatica
 
 Connect2 is an ASP.NET WebForms app. Every **Add to basket** button is a postback that reloads the page, and the button IDs depend on where an item sits in the current list. So presets store each item's stable resource ID (`data-id` on `.resource-availability`). A preset is a list of slots, and each slot is an ordered list of interchangeable units. Presets saved by v0.1 (one unit per entry) are converted automatically. On each page load, the script runs a small queue saved in `localStorage`. It finds the next unit on the page, searching by name (then by the first three words) if it isn't listed, clicks its Add button, and checks that the basket count went up after the reload. If a unit isn't bookable or can't be found, it moves on to the slot's next unit.
 
-Availability uses the same JSON endpoints Connect2's own page calls (`/wizard/freetime/checkdaterangeforresource` and `/wizard/freetime/getnextresourceavailabledate`), with the date strings Connect2 writes into the page after you press Go. Requests only happen when you press a button, one at a time with a short pause, and results are cached for the same dates. For date-range runs, the script builds those date strings itself as MM/DD/YYYY, the format Connect2's date fields use.
+Availability uses the same JSON endpoints Connect2's own page calls (`/wizard/freetime/checkdaterangeforresource` and `/wizard/freetime/getnextresourceavailabledate`), with the date strings Connect2 writes into the page after you press Go. Requests only happen when you press a button, one at a time with a short pause, and results are cached for the same dates. For date-range runs, the script builds those date strings itself as MM/DD/YYYY, the format Connect2's date fields use. A range check comes back like `{ "TypeName": "success", "Title": "Available", "List": ["Collect from: 8:00 AM", "Monday, 26 Oct 2026", "Return by: 4:30 PM", "Wednesday, 28 Oct 2026"] }`, and the script compares those limits with the booking's pickup and return times. Units are then ranked: fits, partly free, couldn't check, wrong times, not free.
 
 A date-range run is a second small state machine in `localStorage`: `basket` (the add queue for that booking's dates) → `create` (pressed Create booking) → `time` (filled the Select time fields and pressed Update) → `handoff` (pressed Next to Terms, or stopped on a problem). It only ever acts on the Select resource and Select time steps.
 
@@ -44,7 +45,7 @@ npm install
 npm test
 ```
 
-`test/run.js` loads the script into saved copies of the Select resource and Select time pages (`test/fixtures/`, with the student name and session tokens removed) and simulates Connect2's reloads. It covers picking, alternates, not-bookable items and warnings, migration from v0.1, the add queue with and without dates (availability responses are faked), the search fallback, date detection, editing date ranges and their warnings, migration from v0.3 shoot days, and a full multi-booking run including a rejected time. It can't cover the live site, so test real changes against Connect2 with a small preset and an empty basket.
+`test/run.js` loads the script into saved copies of the Select resource and Select time pages, plus a Select time page showing a rejected time (`test/fixtures/`, with the student name and session tokens removed) and simulates Connect2's reloads. It covers picking, alternates, not-bookable items and warnings, migration from v0.1, the add queue with and without dates (availability responses are faked), the search fallback, date detection, editing date ranges and their warnings, migration from v0.3 shoot days, checking ranges against collect-from / return-by times and fixing them, ranking alternates by time fit, a full multi-booking run, and recovering from a rejected time with Connect2's suggestions. The fake availability responses copy the real ones' shape. It can't cover the live site, so test real changes against Connect2 with a small preset and an empty basket.
 
 To edit while installed, either paste changes into Tampermonkey's editor, or push to `main` with a higher `@version` and use Tampermonkey's **Check for updates**.
 
@@ -52,7 +53,8 @@ When Connect2 changes its page, save the new page (**Save Page As → Webpage, H
 
 ## Known limits
 
-- Not yet run against the live site. The search fallback, the availability date format, and how Connect2 reads the filled-in times are the parts most likely to need adjusting.
+- Confirmed on the live site: adding a preset, Create booking, filling in the times, and the range-check response format. Not yet confirmed: picking a suggested time, and Connect2's wording for clash types other than cage hours and other bookings (unknown wordings are shown as Connect2 writes them).
+- The range check only reports the collect-from time on the pickup day and the return-by time on the return day. A closure in the middle of a range (say, a lunch hour on the pickup day after the pickup time) isn't checked; Connect2 catches it at Select time.
 - The 3-day warning is conservative: a range must fit in 72 hours *and* 3 calendar days. Connect2 may allow slightly longer; the limits are constants at the top of the date-ranges code, and a range over them is only warned about, not blocked.
 - Each booking still needs you for Terms, Verify, and Complete, by design.
 - The date ranges are one shared list, not saved per preset.
