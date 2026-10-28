@@ -306,7 +306,8 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   check(!!p.button('Start booking 2 of 3') && !!p.button('Redo booking 1'), 'back on the list, offers the next booking or a redo');
   p.button('Start booking 2 of 3').click();
   await until(() => p.postbacks.length);
-  check(p.fetches.length && p.fetches.every((f) => f.start === '10/28/2030' && f.end === '10/28/2030'), 'booking 2 checks its own date');
+  check(/ctl11_bookBtn$/.test(p.postbacks[0] || '') && p.fetches.length === 0,
+    'booking 2 uses the results checked before the run (under 5 minutes old) and picks Kit #3 without new requests');
   check(p.get('run').b === 1, 'run is on booking 2');
   p.save();
 
@@ -607,6 +608,68 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   check(p.w.document.querySelectorAll('.c2p-under').length === 15, 'one per item, with no duplicates after re-rendering');
   p.button('Done').click();
   check(p.w.document.querySelectorAll('.c2p-under').length === 0, 'and they go away when editing is done');
+
+  console.log('Saved results instead of re-checking');
+  resetStorage();
+  storage['c2presets.presets'] = JSON.stringify({ Lights: { category: 'Media Arts Equipment', slots: [
+    { options: [{ id: ID.arri1, name: 'Arri Kit #1' }, { id: ID.arri3, name: 'Arri Kit #3' }] },
+  ] } });
+  storage['c2presets.ui'] = JSON.stringify({ current: 'Lights', open: true });
+  storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-29', endTime: '16:30' }] });
+  p = loadPage({ booked: [ID.arri1] });
+  await until(() => p.w.document.querySelector('.c2p-avail') && !p.w.document.querySelector('.c2p-avail-pending') && !p.root.querySelector('.badge.pending'), 8000);
+  check(p.fetches.length === 14, 'first visit: checks the preset and the page once each (14 items; the preset\'s kits are on this page)');
+  await until(() => p.root.textContent.includes('Checked just now'), 4000);
+  check(p.root.textContent.includes('Checked just now · Refresh'), 'says how old the results are, with Refresh');
+  p.save();
+  check(Object.keys(JSON.parse(storage['c2presets.avail'])).length === 14, 'results are saved in the browser');
+
+  p = loadPage({ booked: [ID.arri1] });
+  await wait(300);
+  check(p.fetches.length === 0 && badgeOf(ID.fog) === '✓ Free for your dates' && p.root.querySelector('li.slot .badge').textContent === 'Not available',
+    'next page or reload: badges come from saved results, with no requests');
+  rangeEl(0).querySelector('button.link').click(); // Edit
+  const t2 = rangeEl(0).querySelectorAll('input[type=time]')[1];
+  t2.value = '12:00'; t2.dispatchEvent(new p.w.Event('change'));
+  await wait(300);
+  check(p.fetches.length === 0, 'changing only the times needs no new requests (Connect2 answers per day)');
+  p.save();
+
+  const aged = (min) => {
+    const a = JSON.parse(storage['c2presets.avail']);
+    for (const k of Object.keys(a)) a[k].at = Date.now() - min * 60000;
+    storage['c2presets.avail'] = JSON.stringify(a);
+  };
+  aged(12);
+  p = loadPage({ booked: [ID.arri1] });
+  await wait(300);
+  check(p.fetches.length === 0 && p.root.textContent.includes('Checked 12 min ago'), 'results under 30 minutes old are still used, and their age shown');
+  p.button('or just add to basket').click();
+  await until(() => p.postbacks.length, 6000);
+  check(p.fetches.length === 2 && /ctl11_bookBtn$/.test(p.postbacks[0] || ''), 'adding re-checks the preset\'s units when results are over 5 minutes old');
+  p.w.localStorage.removeItem('c2presets.queue');
+  p.save();
+
+  aged(31);
+  p = loadPage({ booked: [ID.arri1] });
+  await until(() => p.fetches.length === 14 && !p.w.document.querySelector('.c2p-avail-pending'), 8000);
+  check(p.fetches.length === 14, 'after 30 minutes, everything is checked again');
+  p.save();
+
+  p = loadPage({ booked: [ID.arri1] });
+  await wait(300);
+  p.button('Refresh').click();
+  await until(() => p.fetches.length === 14 && !p.w.document.querySelector('.c2p-avail-pending'), 8000);
+  check(p.fetches.length === 14, 'Refresh checks the selected dates again right away');
+
+  resetStorage();
+  storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-29', endTime: '16:30' }] });
+  p = loadPage();
+  p.w.fetch = async () => { throw new Error('offline'); };
+  await until(() => p.w.document.querySelector('.c2p-avail-unknown') && !p.w.document.querySelector('.c2p-avail-pending'), 8000);
+  check((badgeOf(ID.fog) || '').startsWith('? Couldn\'t check'), 'a failed check says so');
+  p.save();
+  check(Object.keys(JSON.parse(storage['c2presets.avail'] || '{}')).length === 0, 'and failures are never saved');
 
   console.log('Saved pages with a leftover panel');
   p = loadPage({ page: 'time', edit: (h) => h.replace('</form>', '</form><div id="c2presets-host"></div>') });

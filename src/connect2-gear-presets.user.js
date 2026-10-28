@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Connect2 Gear Presets (MTSU)
 // @namespace    nathan.c2presets
-// @version      0.8.0
+// @version      0.9.0
 // @description  Gear presets for MTSU's Connect2 checkout: add a whole preset to your basket in one click, check its availability, and book it for several date ranges.
 // @homepageURL  https://github.com/nathanmontalvoGM/Better-Equipment-Reservation
 // @downloadURL  https://raw.githubusercontent.com/nathanmontalvoGM/Better-Equipment-Reservation/main/src/connect2-gear-presets.user.js
@@ -81,7 +81,30 @@
   // showDates / showPresets / showMore: which panel sections are open. activeRange: the selected dates.
   let ui = Object.assign({ open: true, current: '', editing: false, altFor: null, activeRange: 0, editRange: null }, store.get('ui', {}));
   if (!presets[ui.current]) { ui.current = Object.keys(presets)[0] || ''; ui.altFor = null; }
-  let availability = {}; // `${dates.label}|${id}` -> { label, kind: 'ok'|'limited'|'bad', detail }
+  // ---------- saved availability ----------
+  // `${dates.label}|${id}` -> { label, kind: 'ok'|'limited'|'bad'|'unknown', detail, collect, ret, at }
+  // Saved in localStorage so changing pages doesn't re-check. Connect2 answers per pair of dates,
+  // so changing only the times of a window never needs a new request.
+  const CACHE_MINUTES = 30;   // saved results are reused for this long
+  const BOOKING_MINUTES = 5;  // adding and booking re-check anything older than this
+  const RETRY_MINUTES = 1;    // a failed check is retried after this long (and never saved)
+  const CACHE_MAX = 3000;
+  const minutesOld = (r) => (Date.now() - (r.at || 0)) / 6e4;
+
+  function readSavedAvailability() {
+    const out = {};
+    for (const [k, v] of Object.entries(store.get('avail', {}) || {})) {
+      if (v && v.at && v.kind !== 'unknown' && minutesOld(v) < CACHE_MINUTES) out[k] = v;
+    }
+    return out;
+  }
+  let availability = readSavedAvailability();
+
+  function saveAvailability() {
+    let entries = Object.entries(availability).filter(([, v]) => v.kind !== 'unknown' && minutesOld(v) < CACHE_MINUTES);
+    if (entries.length > CACHE_MAX) entries = entries.sort((a, b) => b[1].at - a[1].at).slice(0, CACHE_MAX);
+    store.set('avail', Object.fromEntries(entries));
+  }
   let statusText = store.get('lastStatus', '');
 
   const savePresets = () => store.set('presets', presets);
@@ -160,11 +183,19 @@
 
   // ---------- availability ----------
   const availKey = (d, id) => d.label + '|' + id;
-  const availFor = (d, id) => (d ? availability[availKey(d, id)] : undefined);
+  // A result younger than maxAge minutes, else undefined.
+  function availFor(d, id, maxAge = CACHE_MINUTES) {
+    const r = d ? availability[availKey(d, id)] : undefined;
+    if (!r) return undefined;
+    const age = minutesOld(r);
+    return age < maxAge && !(r.kind === 'unknown' && age >= RETRY_MINUTES) ? r : undefined;
+  }
 
+  // opts.maxAge: re-check if the saved result is older than this many minutes. opts.quiet: don't re-render.
   async function fetchAvailability(id, d, opts = {}) {
     const key = availKey(d, id);
-    if (availability[key]) return availability[key];
+    const saved = availFor(d, id, opts.maxAge || CACHE_MINUTES);
+    if (saved) return saved;
     let result;
     try {
       const params = d.kind === 'range' ? { resourceId: id, start: d.start, end: d.end } : { resourceId: id, dateTime: d.date };
@@ -202,7 +233,9 @@
     } catch (e) {
       result = { label: 'Couldn\'t check', kind: 'unknown', detail: String(e.message || e) };
     }
+    result.at = Date.now();
     availability[key] = result;
+    saveAvailability();
     if (!opts.quiet) render();
     await sleep(150); // keep requests gentle on Connect2
     return result;
@@ -227,10 +260,10 @@
   }
 
   // Check each slot's units in order, stopping at the first one that fits.
-  async function checkSlots(p, d, booking) {
+  async function checkSlots(p, d, booking, maxAge) {
     for (const slot of p.slots) {
       for (const o of slot.options) {
-        const r = await fetchAvailability(o.id, d);
+        const r = await fetchAvailability(o.id, d, { maxAge });
         if (fitFor(r, booking).kind === 'ok') break;
       }
     }
@@ -455,7 +488,7 @@
     const reports = {};
     for (const b of bookings) {
       if (b.invalid) continue;
-      await checkSlots(p, bookingDates(b), b);
+      await checkSlots(p, bookingDates(b), b, BOOKING_MINUTES);
       reports[b.index] = rangeProblems(p, b);
     }
     return reports;
@@ -927,7 +960,7 @@
       let note = '';
       if (d) {
         setStatus('Finding free units for ' + (act ? act.label : d.label) + '…');
-        await checkSlots(p, d, booking);
+        await checkSlots(p, d, booking, BOOKING_MINUTES);
       } else if (p.slots.some((s) => s.options.length > 1)) {
         note = 'No dates were set, so first choices were used. To let alternates replace booked units, set Check dates in the panel before adding.';
       }
@@ -1293,10 +1326,40 @@
   }
 
   // Under the selected range: what's free on this page, and narrower times that would fit the preset.
+  // How long ago the oldest result shown for the selected dates was checked.
+  function checkedAgo() {
+    const act = activeDates();
+    if (!act) return null;
+    const ids = [];
+    const p = presets[ui.current];
+    if (p) for (const sl of p.slots) for (const o of sl.options) ids.push(o.id);
+    if (isSelectPage()) for (const it of pageItems()) if (it.allowed) ids.push(it.id);
+    const ages = ids.map((id) => availFor(act.d, id)).filter(Boolean).map(minutesOld);
+    if (!ages.length) return null;
+    const m = Math.floor(Math.max(...ages));
+    return m < 1 ? 'Checked just now' : 'Checked ' + m + ' min ago';
+  }
+
+  // Forget saved results for the active dates and check again.
+  function refreshAvailability() {
+    const act = activeDates();
+    if (!act) return;
+    const prefix = act.d.label + '|';
+    for (const k of Object.keys(availability)) if (k.startsWith(prefix)) delete availability[k];
+    saveAvailability();
+    replacements = {};
+    render();
+  }
+
   function rangeExtras(p, b, i) {
     const kids = [];
     const sum = pageSummary();
     if (sum) kids.push(el('div', { class: 'muted' }, sum));
+    const ago = checkedAgo();
+    if (ago && !loadingAvail) {
+      kids.push(el('div', { class: 'muted' }, ago + ' · ',
+        el('button', { class: 'link', title: 'Check these dates again now (results are saved for ' + CACHE_MINUTES + ' minutes)', onclick: refreshAvailability }, 'Refresh')));
+    }
     else if (!isSelectPage()) kids.push(el('div', { class: 'muted' }, 'Open the equipment list to see what\'s free then.'));
     const pr = p && p.slots.length ? rangeProblems(p, b) : null;
     if (pr && pr.fix) {
