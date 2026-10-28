@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Better Checkout
 // @namespace    better-checkout.mtsu
-// @version      1.0.0
+// @version      1.0.1
 // @description  A friendlier way to book gear on MTSU's Connect2 equipment checkout: see what's free for your dates, save the gear you use as lists, and book several dates in a row.
 // @author       Nathan Montalvo
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHJlY3QgeD0iMiIgeT0iMy4yIiB3aWR0aD0iMjAiIGhlaWdodD0iNS4zIiByeD0iMS40IiBmaWxsPSIjMTcxODFkIi8+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTYuMiAzLjJoMi45TDYuNiA4LjVIMy43ek0xMi4yIDMuMmgyLjlsLTIuNSA1LjNIOS43ek0xOC4yIDMuMmgyLjlsLTIuNSA1LjNoLTIuOXoiLz48cmVjdCB4PSIyIiB5PSIxMCIgd2lkdGg9IjIwIiBoZWlnaHQ9IjExLjUiIHJ4PSIyIiBmaWxsPSIjMTcxODFkIi8+PHBhdGggZD0iTTcuNiAxNS42bDIuOSAyLjggNS45LTUuNyIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZjZjMzIiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PC9zdmc+
@@ -19,9 +19,9 @@
  * equipment list. Everything it adds carries its slate logo, so it's never mistaken for Connect2.
  *
  * - Dates: when you'll pick up and return gear. The selected dates show, next to every item on the
- *   list, whether it's free then ("Only show gear that's free" hides the rest). Connect2's own
+ *   list, whether it's available then ("Only show gear that's available" hides the rest). Connect2's own
  *   date-only Availability box is replaced, so dates are set in one place.
- * - Gear lists: the gear you check out every time, with backups for items that might be taken.
+ * - Equipment presets: the gear you check out every time, with backups for items that might be taken.
  *   One click adds a list to the basket, using a unit that's free for your dates.
  * - Booking: one booking per date. For each, it adds the gear, fills in the times and stops at
  *   Terms & Conditions. You finish every booking yourself; it never completes one for you.
@@ -29,8 +29,8 @@
  *   "Use these dates", items that are taken offer something similar, and Connect2's rejections
  *   show its reasons and suggested times.
  *
- * Data (gear lists, dates, saved availability) stays in this browser, under the Connect2 site.
- * Internal names still say "preset" and "c2presets": they're kept so existing data carries over.
+ * Data (equipment presets, dates, saved availability) stays in this browser, under the Connect2 site.
+ * Internal names say "preset" and "c2presets", like the interface.
  */
 
 (function () {
@@ -348,7 +348,7 @@
         result = {
           label: data.Title || data.TypeName || '?',
           kind,
-          detail: shorter ? 'Free only ' + shortLabel(shorter) : [stripHtml(data.Text), limits].filter(Boolean).join(' · '),
+          detail: shorter ? 'Available only ' + shortLabel(shorter) : [stripHtml(data.Text), limits].filter(Boolean).join(' · '),
           collect, ret, shorter,
         };
       } else {
@@ -378,7 +378,7 @@
     if (!r) return { kind: 'unknown', why: 'not checked' };
     if (r.kind !== 'ok') {
       return { kind: r.kind, why: r.kind === 'unknown' ? 'couldn\'t check'
-        : r.kind === 'limited' ? (r.shorter ? 'only free ' + shortLabel(r.shorter) : 'only partly free') : 'not free' };
+        : r.kind === 'limited' ? (r.shorter ? 'only available ' + shortLabel(r.shorter) : 'only partly available') : 'not available' };
     }
     if (!b || !b.startTime) return { kind: 'ok', why: '' };
     const problems = [];
@@ -672,12 +672,12 @@
     const r = availFor(bookingDates(ab), it.id);
     if (!r) return { text: 'Checking…', kind: 'pending', detail: '' };
     const f = fitFor(r, ab);
-    if (f.kind === 'ok') return { text: '✓ Free for your dates', kind: 'ok', detail: '' };
+    if (f.kind === 'ok') return { text: '✓ Available for your dates', kind: 'ok', detail: '' };
     const part = freePart(r, ab);
     if (f.kind === 'hours') return { text: '⚠ ' + cap(f.why), kind: 'limited', detail: '', part };
-    if (f.kind === 'limited') return { text: '⚠ Free for only part of your dates', kind: 'limited', detail: part ? '' : r.detail, part };
+    if (f.kind === 'limited') return { text: '⚠ Available for only part of your dates', kind: 'limited', detail: part ? '' : r.detail, part };
     if (f.kind === 'unknown') return { text: '? Couldn\'t check', kind: 'unknown', detail: r.detail };
-    return { text: '✗ Not free for your dates', kind: 'bad', detail: r.detail };
+    return { text: '✗ Not available for your dates', kind: 'bad', detail: r.detail };
   }
 
   // Badges are left off while the script is adding, booking or scanning: those reload the page constantly.
@@ -716,7 +716,7 @@
     const row = document.createElement('div');
     row.className = 'c2p-freepart';
     const t = document.createElement('span');
-    t.textContent = 'Free ' + shortLabel(part);
+    t.textContent = 'Available ' + shortLabel(part);
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'bc-btn small';
@@ -798,13 +798,13 @@
     const ab = activeBooking();
     const txt = document.createElement('div');
     if (ab) {
-      txt.append(document.createTextNode('Showing what\'s free '));
+      txt.append(document.createTextNode('Showing what\'s available '));
       const strong = document.createElement('span');
       strong.className = 'bc-side-dates';
       strong.textContent = shortLabel(ab);
       txt.append(strong);
     } else {
-      txt.textContent = 'Pick your dates to see what\'s free.';
+      txt.textContent = 'Pick your dates to see what\'s available.';
     }
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -850,7 +850,7 @@
     bar.appendChild(brand);
 
     if (!ab) {
-      bar.appendChild(span('bc-sw-title', 'See only the gear that\'s free when you need it.'));
+      bar.appendChild(span('bc-sw-title', 'See only the gear that\'s available when you need it.'));
       const pick = document.createElement('button');
       pick.type = 'button';
       pick.className = 'c2p-pickdates bc-btn solid';
@@ -870,7 +870,7 @@
     const track = span('bc-track' + (on ? ' on' : ''));
     track.appendChild(span('bc-knob'));
     const words = span('bc-sw-words');
-    words.append(span('bc-sw-title', 'Only show gear that\'s free ' + (on ? '(on)' : '(off)')), span('bc-sw-sub', shortLabel(ab)));
+    words.append(span('bc-sw-title', 'Only show gear that\'s available ' + (on ? '(on)' : '(off)')), span('bc-sw-sub', shortLabel(ab)));
     sw.append(track, words);
     sw.addEventListener('click', (e) => { e.preventDefault(); setOnlyFree(!on); });
     bar.appendChild(sw);
@@ -888,10 +888,10 @@
       }
     }
     const shown = pageItems().length - hidden;
-    const note = !on ? 'Turn this on to hide everything that isn\'t free then.'
+    const note = !on ? 'Turn this on to hide everything that isn\'t available then.'
       : pending ? 'Still checking ' + pending + ' item' + (pending > 1 ? 's' : '') + '…'
-      : !shown ? 'Nothing on this page is free then. Try the next page.'
-      : 'Hiding ' + hidden + ' item' + (hidden === 1 ? '' : 's') + ' on this page that ' + (hidden === 1 ? 'isn\'t' : 'aren\'t') + ' free then.';
+      : !shown ? 'Nothing on this page is available then. Try the next page.'
+      : 'Hiding ' + hidden + ' item' + (hidden === 1 ? '' : 's') + ' on this page that ' + (hidden === 1 ? 'isn\'t' : 'aren\'t') + ' available then.';
     bar.appendChild(span('bc-bar-note', note));
     list.parentNode.insertBefore(bar, list);
   }
@@ -948,9 +948,9 @@
     const counts = { ok: 0, limited: 0, bad: 0, unknown: 0, pending: 0 };
     for (const it of pageItems()) { const bd = itemBadge(it); if (bd) counts[bd.kind] += 1; }
     const parts = [];
-    if (counts.ok) parts.push(counts.ok + ' free');
-    if (counts.limited) parts.push(counts.limited + ' partly free');
-    if (counts.bad) parts.push(counts.bad + ' not free');
+    if (counts.ok) parts.push(counts.ok + ' available');
+    if (counts.limited) parts.push(counts.limited + ' partly available');
+    if (counts.bad) parts.push(counts.bad + ' not available');
     if (counts.unknown) parts.push(counts.unknown + ' couldn\'t check');
     if (counts.pending) parts.push('checking ' + counts.pending + '…');
     return parts.length ? 'On this page: ' + parts.join(', ') + '.' : '';
@@ -1059,14 +1059,14 @@
         isSelectPage() ? el('button', { onclick: startScan }, 'Scan equipment list') : el('div', { class: 'muted' }, 'Open the equipment list once, or scan it from there.'));
     }
     if (!st) return el('div', { class: 'repl' }, el('button', { onclick: () => searchReplacements(key, orig, b, p) }, 'Find something similar'));
-    if (st.loading) return el('div', { class: 'repl muted' }, 'Looking for similar gear that\'s free then…');
+    if (st.loading) return el('div', { class: 'repl muted' }, 'Looking for similar gear that\'s available then…');
     if (!st.found.length) {
       return el('div', { class: 'repl muted' }, st.looked
-        ? 'None of the ' + st.looked + ' most similar items are free then.'
+        ? 'None of the ' + st.looked + ' most similar items are available then.'
         : 'Nothing similar among the ' + catalogSize() + ' items Better Checkout knows' + (listTotal() > catalogSize() ? '. Scan the equipment list to search all of it' : '') + '.');
     }
     return el('div', { class: 'repl' },
-      el('div', { class: 'muted' }, 'Free then:'),
+      el('div', { class: 'muted' }, 'Available then:'),
       st.found.map((c) => el('div', { class: 'cand' },
         el('span', {}, c.name, c.type ? el('span', { class: 'muted' }, ' · ' + c.type) : null),
         el('button', { onclick: () => onPick(c) }, pickLabel))));
@@ -1128,12 +1128,12 @@
   async function startRun() {
     const p = presets[ui.current];
     const bookings = computeBookings(schedule.ranges);
-    if (!p || !p.slots.length) return setStatus('Pick a gear list with items first.');
+    if (!p || !p.slots.length) return setStatus('Pick a preset with items first.');
     if (!bookings.length) return setStatus('Add dates first.');
     if (bookings.some((b) => b.invalid)) return setStatus('Fix the dates marked "return is not after pickup" first.');
     if (!isSelectPage()) return setStatus('Open Book by Category → ' + (p.category || 'your equipment category') + ' first.');
     if (p.category && category() && p.category !== category()) {
-      if (!confirm('This gear list was made in "' + p.category + '", but this page is "' + category() + '". Continue anyway?')) return;
+      if (!confirm('This preset was made in "' + p.category + '", but this page is "' + category() + '". Continue anyway?')) return;
     }
     if (starting) return;
     starting = true;
@@ -1352,10 +1352,10 @@
   // opts.dates overrides the page's Availability dates; opts.booking adds times to fit; opts.run marks a booking run.
   async function startQueue(name, opts = {}) {
     const p = presets[name];
-    if (!p || !p.slots.length) return setStatus('That gear list is empty.');
+    if (!p || !p.slots.length) return setStatus('That preset is empty.');
     if (!isSelectPage()) return setStatus('Open a "Book by Category" equipment list first.');
     if (!opts.run && p.category && category() && p.category !== category()) {
-      if (!confirm('This gear list was made in "' + p.category + '", but this page is "' + category() + '". Continue anyway?')) return;
+      if (!confirm('This preset was made in "' + p.category + '", but this page is "' + category() + '". Continue anyway?')) return;
     }
     if (starting) return;
     starting = true;
@@ -1365,7 +1365,7 @@
       const booking = opts.booking || (act && act.booking) || null;
       let note = '';
       if (d) {
-        setStatus('Checking what\'s free ' + (act ? act.label : d.label) + '…');
+        setStatus('Checking what\'s available ' + (act ? act.label : d.label) + '…');
         await checkSlots(p, d, booking, BOOKING_MINUTES);
       } else if (p.slots.some((s) => s.options.length > 1)) {
         note = 'No dates were picked, so first choices were used. Pick your dates first to let backups stand in for taken gear.';
@@ -1383,10 +1383,10 @@
         const blocked = items.map((it, si) => si).filter((si) => !items[si].fits.some((f) => f.kind === 'ok') && !decided[si]);
         if (blocked.length) {
           run.stage = 'gate';
-          log('run', 'booking ' + (run.b + 1) + ': not free as booked: ' + blocked.map((si) => items[si].first.name).join('; '));
+          log('run', 'booking ' + (run.b + 1) + ': not available as booked: ' + blocked.map((si) => items[si].first.name).join('; '));
           run.gate = { decided, blocked: blocked.map((si) => ({ si, id: items[si].first.id, name: items[si].first.name, why: items[si].firstFit.why })) };
           saveRun(run);
-          setStatus('Booking ' + (run.b + 1) + ': ' + blocked.length + (blocked.length > 1 ? ' items aren\'t' : ' item isn\'t') + ' free as booked. Nothing was added yet; choose what to do above.');
+          setStatus('Booking ' + (run.b + 1) + ': ' + blocked.length + (blocked.length > 1 ? ' items aren\'t' : ' item isn\'t') + ' available as booked. Nothing was added yet; choose what to do above.');
           return;
         }
         items = items.filter((it, si) => decided[si] !== 'skip');
@@ -1460,11 +1460,11 @@
           const why = q.skipped.slice();
           const ff = it.firstFit || {};
           if (ff.kind === 'hours') why.unshift(it.first.name + ' (' + ff.why + ')');
-          else if (ff.kind === 'bad' || ff.kind === 'limited') why.unshift(it.first.name + ' (not free for your dates)');
+          else if (ff.kind === 'bad' || ff.kind === 'limited') why.unshift(it.first.name + ' (not available for your dates)');
           notes.push('used ' + o.name + ' instead of ' + it.first.name + (why.length ? ' — skipped ' + why.join('; ') : ''));
         }
         const f = (it.fits || [])[q.opt] || {};
-        if (f.kind === 'bad') notes.push(o.name + ' was added but no unit is free for your dates');
+        if (f.kind === 'bad') notes.push(o.name + ' was added, but none of its units are available for your dates');
         else if (f.kind === 'limited') notes.push(o.name + ' is only partly available for your dates');
         else if (f.kind === 'hours') notes.push(o.name + ' was added, but Connect2 says ' + f.why);
         q.results.push({ ok: true, line: notes.join('. ') });
@@ -1560,9 +1560,9 @@
       return setStatus('That share link is broken or incomplete. Ask for a new one.');
     }
     const count = preset.slots.length + (preset.slots.length === 1 ? ' item' : ' items');
-    if (!confirm('Better Checkout: add the gear list "' + data.n + '" (' + count + ') that was shared with you?')) return log('share', 'declined "' + data.n + '"');
+    if (!confirm('Better Checkout: add the equipment preset "' + data.n + '" (' + count + ') that was shared with you?')) return log('share', 'declined "' + data.n + '"');
     let name = String(data.n);
-    if (presets[name] && !confirm('You already have a gear list called "' + name + '". Replace it?')) {
+    if (presets[name] && !confirm('You already have a preset called "' + name + '". Replace it?')) {
       let k = 2;
       while (presets[name + ' (shared' + (k > 2 ? ' ' + k : '') + ')']) k += 1;
       name = name + ' (shared' + (k > 2 ? ' ' + k : '') + ')';
@@ -1571,7 +1571,7 @@
     Object.assign(ui, { current: name, open: true, showPresets: true, editing: false, altFor: null });
     savePresets(); saveUi();
     log('share', 'added "' + name + '" (' + count + ')');
-    setStatus('Added the gear list "' + name + '" (' + count + ').');
+    setStatus('Added the preset "' + name + '" (' + count + ').');
   }
 
   function problemReport() {
@@ -1600,7 +1600,7 @@
         'clash box ' + yes(qs('[id$="MainWizardContent_suggestionsDv"]')),
       ].join(', '),
       'State: ' + [
-        Object.keys(presets).length + ' gear list(s)' + (p ? ', selected has ' + p.slots.length + ' item(s)' : ''),
+        Object.keys(presets).length + ' preset(s)' + (p ? ', selected has ' + p.slots.length + ' item(s)' : ''),
         schedule.ranges.length + ' date window(s)' + (ab ? ', selected ' + bookingLabel(ab) : ''),
         run ? 'run on booking ' + (run.b + 1) + '/' + run.bookings.length + ', stage ' + run.stage + (run.problem ? ' (' + run.problem.slice(0, 160) + ')' : '') : 'no run',
         q ? 'adding item ' + (q.i + 1) + '/' + q.items.length + ', phase ' + q.phase : 'not adding',
@@ -1622,13 +1622,13 @@
 
   // ---------- preset management ----------
   function newPreset() {
-    const name = (prompt('Name your gear list (for example "A-cam package" or "Interview audio"):') || '').trim();
+    const name = (prompt('Name your equipment preset (for example "A-cam package" or "Interview audio"):') || '').trim();
     if (!name) return;
     if (presets[name] && !confirm('"' + name + '" already exists. Replace it?')) return;
     presets[name] = { category: category(), slots: [] };
     ui.current = name; ui.editing = true; ui.altFor = null; ui.showPresets = true;
     savePresets(); saveUi();
-    setStatus('Now click "+ Save to list" on each item you want in "' + name + '". Use Connect2\'s search or categories to find them.');
+    setStatus('Now click "+ Preset" on each item you want in "' + name + '". Use Connect2\'s search or categories to find them.');
   }
 
   function renamePreset() {
@@ -1636,13 +1636,13 @@
     if (!old) return;
     const name = (prompt('Rename "' + old + '" to:', old) || '').trim();
     if (!name || name === old) return;
-    if (presets[name]) return alert('You already have a gear list with that name.');
+    if (presets[name]) return alert('You already have a preset with that name.');
     presets[name] = presets[old]; delete presets[old];
     ui.current = name; savePresets(); saveUi(); render();
   }
 
   function deletePreset() {
-    if (!ui.current || !confirm('Delete the gear list "' + ui.current + '"? This can\'t be undone.')) return;
+    if (!ui.current || !confirm('Delete the preset "' + ui.current + '"? This can\'t be undone.')) return;
     delete presets[ui.current];
     ui.current = Object.keys(presets)[0] || ''; ui.editing = false; ui.altFor = null;
     savePresets(); saveUi(); render();
@@ -1689,11 +1689,11 @@
   }
 
   function exportPresets() {
-    copyText(JSON.stringify(presets, null, 2), 'Copied all your gear lists as text. Someone else can add them with Import lists.');
+    copyText(JSON.stringify(presets, null, 2), 'Copied all your presets as text. Someone else can add them with Import presets.');
   }
 
   function importPresets() {
-    const txt = prompt('Paste the text from Export lists:');
+    const txt = prompt('Paste the text from Export presets:');
     if (!txt) return;
     try {
       const data = normalizeAll(JSON.parse(txt));
@@ -1706,9 +1706,9 @@
       }
       if (!ui.current) ui.current = Object.keys(presets)[0] || '';
       savePresets(); saveUi();
-      setStatus('Imported ' + n + (n === 1 ? ' gear list.' : ' gear lists.'));
+      setStatus('Imported ' + n + (n === 1 ? ' preset.' : ' presets.'));
     } catch (e) {
-      alert('That text isn\'t from Export lists. Copy it again and try once more.');
+      alert('That text isn\'t from Export presets. Copy it again and try once more.');
     }
   }
 
@@ -1897,11 +1897,11 @@
       kids.push(el('div', { class: 'muted' }, ago + '. ',
         el('button', { class: 'link', title: 'Check these dates again now (results are saved for ' + CACHE_MINUTES + ' minutes)', onclick: refreshAvailability }, 'Refresh')));
     }
-    else if (!isSelectPage()) kids.push(el('div', { class: 'muted' }, 'Open the equipment list to see what\'s free then.'));
+    else if (!isSelectPage()) kids.push(el('div', { class: 'muted' }, 'Open the equipment list to see what\'s available then.'));
     const pr = p && p.slots.length ? rangeProblems(p, b) : null;
     if (pr && pr.fix) {
       kids.push(el('div', { class: 'fit' },
-        el('span', {}, 'Everything in your list is free ' + shortLabel(pr.fix) + '.'),
+        el('span', {}, 'Everything in your preset is available ' + shortLabel(pr.fix) + '.'),
         el('button', { class: 'mini', title: 'Change these dates to ' + bookingLabel(pr.fix), onclick: () => fitTimes(i, pr.fix) }, 'Use those times')));
     }
     return kids.length ? el('div', { class: 'extras' }, kids) : null;
@@ -1912,7 +1912,7 @@
     const active = activeIndex();
     const kids = [];
     if (!schedule.ranges.length) {
-      kids.push(el('div', { class: 'muted' }, 'Add when you\'ll pick up and return the gear. Every item on the equipment list then shows whether it\'s free.'));
+      kids.push(el('div', { class: 'muted' }, 'Add when you\'ll pick up and return the gear. Every item on the equipment list then shows whether it\'s available.'));
     }
     schedule.ranges.forEach((r, i) => {
       const b = bookings.find((x) => x.index === i);
@@ -1942,7 +1942,7 @@
       const f = a && act.booking ? fitFor(a, act.booking) : null;
       const kind = !a ? (ab ? 'pending' : null) : f ? (f.kind === 'hours' ? 'limited' : f.kind) : a.kind;
       const part = a && ab ? freePart(a, ab) : null;
-      const plain = { ok: 'Free', bad: 'Not free', limited: 'Part of the time', unknown: 'Couldn\'t check' };
+      const plain = { ok: 'Available', bad: 'Not available', limited: 'Part of the time', unknown: 'Couldn\'t check' };
       const label = !a ? 'Checking…' : f && f.kind === 'hours' ? cap(f.why) : part ? 'Part of the time' : plain[kind] || a.label;
       return el('div', { class: 'opt' + (oi ? ' alt' : '') },
         oi ? el('span', { class: 'or' }, 'or') : null,
@@ -1950,7 +1950,7 @@
         kind ? el('span', { class: 'badge ' + kind, title: a ? a.detail || '' : '' }, label) : null,
         editing && slot.options.length > 1 ? el('button', { class: 'x', title: 'Remove this backup', 'aria-label': 'Remove ' + o.name, onclick: () => removeOption(si, oi) }, '×') : null,
         o.note && WARN_RE.test(o.note) ? el('div', { class: 'warn' }, '⚠ ' + o.note) : null,
-        part ? el('div', { class: 'freepart' }, 'Free ' + shortLabel(part)) : null,
+        part ? el('div', { class: 'freepart' }, 'Available ' + shortLabel(part)) : null,
         a && kind !== 'ok' && a.detail && !part && !(f && f.kind === 'hours') ? el('div', { class: 'detail' }, a.detail) : null);
     });
     // Nothing in this slot is free for the selected dates: offer something similar.
@@ -1965,7 +1965,7 @@
         }) : null),
       editing ? el('div', { class: 'tools' },
         el('button', { class: 'mini' + (ui.altFor === si ? ' on' : ''), title: 'Add backups for this item: gear that can stand in if it\'s taken', onclick: () => toggleAltMode(si) }, ui.altFor === si ? 'Done' : '+ Backup'),
-        el('button', { class: 'x', title: 'Remove from the list', 'aria-label': 'Remove ' + slot.options[0].name, onclick: () => removeSlot(si) }, '×')) : null);
+        el('button', { class: 'x', title: 'Remove from the preset', 'aria-label': 'Remove ' + slot.options[0].name, onclick: () => removeSlot(si) }, '×')) : null);
   }
 
   const NEW_PRESET = '\u0000new';
@@ -1975,30 +1975,30 @@
     const kids = [];
     if (!names.length) {
       kids.push(el('div', { class: 'muted' }, 'Save the gear you check out every time. Then one click adds it all to your basket.'));
-      kids.push(el('div', { class: 'row' }, el('button', { class: 'mini', onclick: newPreset }, 'New gear list')));
+      kids.push(el('div', { class: 'row' }, el('button', { class: 'mini', onclick: newPreset }, 'New preset')));
       return kids;
     }
     kids.push(el('div', { class: 'row' },
-      el('select', { 'aria-label': 'Gear list', onchange: (e) => {
+      el('select', { 'aria-label': 'Equipment preset', onchange: (e) => {
         if (e.target.value === NEW_PRESET) { e.target.value = ui.current; return newPreset(); }
         ui.current = e.target.value; ui.editing = false; ui.altFor = null; saveUi(); render();
       } },
         names.map((n) => el('option', { value: n, selected: n === ui.current }, n + ' (' + presets[n].slots.length + ')')),
-        el('option', { value: NEW_PRESET }, 'New gear list…')),
+        el('option', { value: NEW_PRESET }, 'New preset…')),
       p ? el('button', { class: ui.editing ? 'on' : '', onclick: () => { ui.editing = !ui.editing; if (!ui.editing) ui.altFor = null; saveUi(); render(); } }, ui.editing ? 'Done' : 'Edit') : null));
     if (!p) return kids;
 
     if (ui.editing) {
       kids.push(el('div', { class: 'hint' }, ui.altFor != null && p.slots[ui.altFor]
         ? 'Click "+ Backup" on gear in the equipment list that can stand in for ' + p.slots[ui.altFor].options[0].name + ', in the order you\'d want it.'
-        : 'Click "+ Save to list" on gear in the equipment list to add it here. "+ Backup" adds stand-ins for an item in case it\'s taken.'));
+        : 'Click "+ Preset" on gear in the equipment list to add it here. "+ Backup" adds stand-ins for an item in case it\'s taken.'));
     }
     if (p.slots.length) kids.push(el('ul', { 'aria-label': ui.current }, p.slots.map((sl, si) => renderSlot(sl, si, act, p))));
-    else kids.push(el('div', { class: 'muted' }, ui.editing ? 'Nothing saved yet.' : 'This list is empty. Press Edit, then "+ Save to list" on gear in the equipment list.'));
+    else kids.push(el('div', { class: 'muted' }, ui.editing ? 'Nothing saved yet.' : 'This preset is empty. Press Edit, then "+ Preset" on gear in the equipment list.'));
     if (ui.editing) {
       kids.push(el('div', { class: 'row' },
         el('button', { class: 'link', onclick: renamePreset }, 'Rename'),
-        el('button', { class: 'link', onclick: deletePreset }, 'Delete list')));
+        el('button', { class: 'link', onclick: deletePreset }, 'Delete preset')));
       return kids;
     }
 
@@ -2006,7 +2006,7 @@
       const bookings = computeBookings(schedule.ranges);
       const busy = !!queue || starting || !!getRun();
       const where = isSelectPage();
-      const addBtn = (cls, label) => el('button', { class: cls, disabled: busy || !where, title: 'Add one of each item to your basket' + (act ? ' (a unit that\'s free ' + act.label + ')' : ''), onclick: () => startQueue(ui.current) }, label);
+      const addBtn = (cls, label) => el('button', { class: cls, disabled: busy || !where, title: 'Add one of each item to your basket' + (act ? ' (a unit that\'s available ' + act.label + ')' : ''), onclick: () => startQueue(ui.current) }, label);
       if (bookings.length) {
         kids.push(el('div', { class: 'actions' },
           el('button', { class: 'primary', disabled: busy || !where || bookings.some((b) => b.invalid), title: 'One booking per date. Each stops at Terms & Conditions for you to finish.', onclick: startRun },
@@ -2026,10 +2026,10 @@
     const p = presets[ui.current];
     return [
       el('div', { class: 'row' },
-        el('button', { class: 'mini', onclick: copyShareLink, disabled: !p || !p.slots.length, title: 'Copy a link that adds this gear list for anyone with Better Checkout' },
-          p ? 'Share "' + ui.current + '"' : 'Share a list'),
-        el('button', { class: 'mini', onclick: exportPresets, disabled: !names.length, title: 'Copy all your gear lists as text' }, 'Export lists'),
-        el('button', { class: 'mini', onclick: importPresets, title: 'Add gear lists from exported text' }, 'Import lists')),
+        el('button', { class: 'mini', onclick: copyShareLink, disabled: !p || !p.slots.length, title: 'Copy a link that adds this preset for anyone with Better Checkout' },
+          p ? 'Share "' + ui.current + '"' : 'Share a preset'),
+        el('button', { class: 'mini', onclick: exportPresets, disabled: !names.length, title: 'Copy all your presets as text' }, 'Export presets'),
+        el('button', { class: 'mini', onclick: importPresets, title: 'Add presets from exported text' }, 'Import presets')),
       el('div', { class: 'row' },
         store.get('scan', null)
           ? el('button', { class: 'mini', onclick: stopScan }, 'Stop scan')
@@ -2051,7 +2051,7 @@
       el('div', { class: 'muted' }, bookingLabel(bk) + ' · ' + run.preset));
     if (run.stage === 'gate' && run.gate) {
       const p = presets[run.preset];
-      box.append(el('div', {}, 'Nothing has been added yet. These items aren\'t free for this booking:'));
+      box.append(el('div', {}, 'Nothing has been added yet. These items aren\'t available for this booking:'));
       for (const g of run.gate.blocked) {
         const choice = run.gate.decided[g.si];
         if (choice) {
@@ -2153,10 +2153,10 @@
       body.append(card('showDates', true, 'Dates',
         schedule.ranges.length ? (ab ? shortLabel(ab) : schedule.ranges.length + ' saved') : 'None yet',
         renderDates(p)));
-      body.append(card('showPresets', true, 'Gear list',
+      body.append(card('showPresets', true, 'Equipment Presets',
         p ? ui.current + ', ' + p.slots.length + (p.slots.length === 1 ? ' item' : ' items') : 'None yet',
         renderPreset(p, act, queue)));
-      body.append(card('showMore', false, 'Share and help', '', renderMore()));
+      body.append(card('showMore', false, 'Share and Help', '', renderMore()));
       panel.append(body);
     }
     root.append(panel);
@@ -2190,7 +2190,7 @@
         b.title = it.reason;
         b.disabled = true;
       } else {
-        label = altMode ? '+ Backup' : '+ Save to list';
+        label = altMode ? '+ Backup' : '+ Preset';
         b.title = 'Better Checkout: add to "' + ui.current + '"' + (altMode ? ' as a backup for ' + p.slots[ui.altFor].options[0].name : '');
       }
       if (!pos && it.allowed && it.note && WARN_RE.test(it.note)) b.title += '. Note: ' + it.note;
