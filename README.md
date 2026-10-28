@@ -14,23 +14,42 @@ Installing from the raw link means Tampermonkey picks up new versions automatica
 
 ## Use
 
-- **Check dates** (top of the panel): set a pickup and a return, each with a date and time. Every item on the equipment list then shows whether it's free for that window: **✓ Free for your dates**, **⚠ Collect from 10:00 AM Mon 11/2** / **⚠ Return by 2:00 PM Wed 11/4** (free that day, but not for your times), or **✗ Not free for your dates**. The panel sums up the page ("12 free · 1 with a time problem · 1 not free"). The dates stay set as you page through the list, and **Clear** removes them. Presets use the same dates: the badges on your preset's items, **Check availability**, and **Add all to basket**, which picks a unit that's free then in each slot. **+ Add to date ranges** turns the window into a booking range, and the dropdown copies a date range back. Connect2's own Availability box still works as a fallback, but it only checks whole days and reloads the page.
-- **New**: name a preset, then click **+ Preset** next to each item you want. Each pick becomes a *slot*, one thing you need. Use Connect2's search box or page through the list to find items.
-- **+ alt**: on a slot in the panel, adds interchangeable units to it. Click **+ Alt** on each one in the list (for example Arri Kit #3 and #4 as backups for Kit #1), in the order you'd want them, then **Done**.
-- **Can't book**: items your account isn't allowed to book show this instead of **+ Preset** and can't be added. Item notes that sound like a rule ("without prior permission", "training required") show as ⚠ warnings in the preset.
-- **Add all to basket**: adds one unit per slot. If you've set **Check dates** (or Connect2's Availability box), each slot uses its first unit that's free for those dates. Without dates it uses your first choice, and only falls back to an alternate if the first can't be booked or found. Every add reloads the page (that's how Connect2 works), so expect a few seconds of flicker. The summary lists any swaps and anything it couldn't add.
-- **Check availability**: checks the preset against your **Check dates**. Each slot's units are checked in order until one that fits turns up, including units not on the current page.
-- **Book several date ranges**: open this section under a preset and press **+ Date range** for each booking you need. Each range has a **Pickup** date and time and a **Return** date and time, and becomes one booking (Connect2 allows up to 3 days). Moving a pickup date moves its return date with it, and a new range starts the day after the last return with the same length and times. Each range shows warnings for past dates, overlaps, a return before pickup, or more than 3 days. **Book N bookings** then, for each range in pickup order:
-  1. adds the preset to your basket, using a free unit in each slot for that booking's own dates;
-  2. presses **Create booking**, fills in the pickup and return times, and presses **Update**;
-  3. presses **Next** to Terms & Conditions and stops. You finish Terms, Special Requests, Verify, and Complete;
-  4. back on **Book by Category → Media Arts Equipment**, the panel offers **Start booking 2 of N** (or **Redo**).
+The panel has three sections. Each opens and closes from its header, and closed sections show a one-line summary.
 
-  Before anything is added, every range is checked with real times (see **Check ranges** below), and the start confirmation lists any problems. If an item still doesn't fit a booking when its turn comes, the run stops on the equipment list before adding anything and asks, item by item: **Use** a similar item that's free then (see **Replacements**), **Add it anyway**, or **Leave it out**. If Connect2 still rejects a time on Select time, the run stops there and shows Connect2's reasons item by item (outside cage hours, booked by someone else), including the ones Connect2 hides behind "Show more". Connect2's suggested times appear as buttons: pick one and the run continues to Next. Or change the times yourself, press Update, then Next.
-- **Check ranges**: checks every date range against what Connect2 says about each unit: when it can be collected on the pickup day and when it must be back on the return day. That catches cage hours and other people's bookings that start or end partway through a day. Problems show under each range (for example "✗ Canon EF 24-105mm: return by 2:00 PM Wed 10/28"). When narrowing the times would fix everything, a button such as **Use Mon 10/26 9:00 AM → Wed 10/28 2:00 PM** applies it. Alternates count: a slot is fine if any of its units fits, and runs pick the unit that fits. Each problem item also gets **Find a replacement**.
-- **Replacements**: the script remembers every item on any equipment list page you open. **Scan equipment list** (at the bottom of the panel) pages through the whole list once, the same as clicking Next through it, so suggestions can come from all of it. When an item isn't free, **Find a replacement** looks for similar items: same Connect2 category, and shared brand, focal length, aperture, or kind of gear ("lens", "light"…), ignoring shelf codes like "A3-A6". The 8 most similar are checked against that booking's actual times, and up to 3 that fit are offered. Picking one adds it as an alternate in that slot, so it's used for this booking and remembered for next time. On a Select time page where Connect2 says an item is booked by someone else, the same search is offered; to use the replacement in that booking, press Back, empty your basket, and press **Redo**.
-- **Stop / Resume**: stops an add in progress. Items already added stay in your basket.
-- **Export / Import**: presets live only in the browser you made them in. Export copies them as text you can send to your crew or move to another computer.
+### Dates
+
+The times you need gear, as a list of pickup → return windows (date and time). Each one becomes one booking when you book, and Connect2 allows up to 3 days.
+
+- **+ Add dates** adds a window. A new one starts the day after the last return, with the same length and times. **Edit** opens its pickup and return fields; moving the pickup date moves the return date with it. **×** removes it.
+- **The selected window (●)** decides what's shown as free. Click another window to switch. Every bookable item on the equipment list gets a badge: **✓ Free for your dates**, **⚠ Collect from 10:00 AM Mon 11/2** / **⚠ Return by 2:00 PM Wed 11/4** (free those days, but not for your times), or **✗ Not free for your dates**. Under the selected window, the panel sums up the page ("12 free · 1 with a time problem · 1 not free").
+- **Fit times**: when the only problem is that some preset items must be collected later or returned earlier, this button narrows the window to times that fit them all.
+- **Warnings**: past dates, overlapping windows, a return before pickup (this one blocks booking), and windows over 3 days.
+
+Connect2's own Availability box still works as a fallback when you have no dates here, but it only checks whole days and reloads the page.
+
+### Preset
+
+The gear you book every week. Pick a preset from the dropdown, or choose **+ New preset…**.
+
+- **Each item** shows whether it's free for the selected dates. Items with nothing free then get **Find a replacement**, which suggests similar items (see Replacements below). Picking one adds it as a backup.
+- **Item notes** that sound like a rule ("without prior permission", "training required") show as ⚠ warnings.
+- **Edit** shows the controls: **+ Preset** on each item in the equipment list, **+ alt** to add backup units for an item (for example Arri Kit #3 and #4 for Kit #1, clicked in the list in the order you'd want them), **×** to remove, and **Rename** / **Delete preset**. Items your account can't book show **Can't book** and can't be added. **Done** hides the controls.
+- **Book N date ranges** makes one booking per date window, in pickup order. Before adding anything, every window is checked with real times, and the confirmation lists any problems. Then, for each window, the script:
+  1. adds the preset to your basket, using a unit that's free in each slot for that window;
+  2. presses **Create booking**, fills in the pickup and return times, and presses **Update**;
+  3. presses **Next** to Terms & Conditions and stops. You finish Terms, Special Requests, Verify, and Complete.
+
+  Back on **Book by Category → Media Arts Equipment**, the panel offers **Start booking 2 of N** (or **Redo**). If an item doesn't fit a window when its turn comes, the run stops before adding anything and asks, item by item: **Use** a replacement that's free then, **Add it anyway**, or **Leave it out**. If Connect2 still rejects a time on Select time, the run stops there and shows Connect2's reasons item by item (outside cage hours, booked by someone else), including the ones Connect2 hides behind "Show more". Connect2's suggested times appear as buttons: pick one and the run continues to Next.
+- **or just add to basket** (or **Add to basket** when you have no dates) adds one unit per item for the selected dates without booking. Every add reloads the page, so expect a few seconds of flicker. The summary lists any swaps and anything it couldn't add. **Stop** cancels; items already added stay in your basket.
+
+### More
+
+- **Scan equipment list** pages through the whole list once, the same as clicking Next through it, so replacement suggestions can come from all of it. The script also remembers every list page you open.
+- **Export presets / Import**: presets live only in the browser you made them in. Export copies them as text you can send to your crew or move to another computer.
+
+### Replacements
+
+When nothing in a slot is free, **Find a replacement** looks for similar items: same Connect2 category, and shared brand, focal length, aperture, or kind of gear ("lens", "light"…), ignoring shelf codes like "A3-A6". The 8 most similar are checked against the window's actual times, and up to 3 that fit are offered. The search is offered in the preset, before a run adds anything, and on a Select time page where Connect2 says an item is booked by someone else. In that last case, to use the replacement for that booking, press Back, empty your basket, and press **Redo**.
 
 ## How it works
 
@@ -47,7 +66,7 @@ npm install
 npm test
 ```
 
-`test/run.js` loads the script into saved copies of the Select resource and Select time pages, plus a Select time page showing a rejected time (`test/fixtures/`, with the student name and session tokens removed) and simulates Connect2's reloads. It covers picking, alternates, not-bookable items and warnings, migration from v0.1, the add queue with and without dates (availability responses are faked), the search fallback, date detection, editing date ranges and their warnings, migration from v0.3 shoot days, checking ranges against collect-from / return-by times and fixing them, ranking alternates by time fit, a full multi-booking run, recovering from a rejected time with Connect2's suggestions, the catalog and list scan, similarity ranking, and picking replacements in Check ranges, during a run, and after a rejection. The fake availability responses copy the real ones' shape. It can't cover the live site, so test real changes against Connect2 with a small preset and an empty basket.
+`test/run.js` loads the script into saved copies of the Select resource and Select time pages, plus a Select time page showing a rejected time (`test/fixtures/`, with the student name and session tokens removed) and simulates Connect2's reloads. It covers picking, alternates, not-bookable items and warnings, migration from v0.1, the add queue with and without dates (availability responses are faked), the search fallback, date detection, editing date windows and their warnings, migrations from v0.3 shoot days and v0.7 check dates, availability badges on the list and the preset for the selected window, fitting times to collect-from / return-by limits, ranking alternates by time fit, a full multi-booking run, recovering from a rejected time with Connect2's suggestions, the catalog and list scan, similarity ranking, picking replacements in the preset, during a run, and after a rejection, collapsible sections and edit mode, and the button layout on the list. The fake availability responses copy the real ones' shape. It can't cover the live site, so test real changes against Connect2 with a small preset and an empty basket.
 
 To edit while installed, either paste changes into Tampermonkey's editor, or push to `main` with a higher `@version` and use Tampermonkey's **Check for updates**.
 
@@ -56,14 +75,14 @@ When Connect2 changes its page, save the new page (**Save Page As → Webpage, H
 ## Known limits
 
 - Confirmed on the live site: adding a preset, Create booking, filling in the times, and the range-check response format. Not yet confirmed: picking a suggested time, and Connect2's wording for clash types other than cage hours and other bookings (unknown wordings are shown as Connect2 writes them).
-- Check dates only check the items on the page you're looking at (15 at a time, one request each, with a short pause between them). Each page is checked when you open it.
+- Availability is checked automatically for the selected window: the preset's items first, then the items on the page you're looking at (15 at a time, one request each, with a short pause between them). Results are kept until you reload, so switching back to a window you've already checked is instant. Nothing is checked while the script is adding, booking, or scanning.
 - "Similar" is a name match, not knowledge of gear. It can suggest a camera kit that includes the right lens ("Canon 70D with 18-135mm Lens") as a lens replacement, or miss a good substitute with a very different name. You always choose; nothing is swapped automatically.
 - Replacement search only knows the items the script has seen. Run **Scan equipment list** again after the cage adds gear.
 - After a rejected time, swapping an item needs an empty basket and a redo; the script doesn't edit the basket.
 - The range check only reports the collect-from time on the pickup day and the return-by time on the return day. A closure in the middle of a range (say, a lunch hour on the pickup day after the pickup time) isn't checked; Connect2 catches it at Select time.
 - The 3-day warning is conservative: a range must fit in 72 hours *and* 3 calendar days. Connect2 may allow slightly longer; the limits are constants at the top of the date-ranges code, and a range over them is only warned about, not blocked.
 - Each booking still needs you for Terms, Verify, and Complete, by design.
-- The date ranges are one shared list, not saved per preset.
+- The dates are one shared list, not saved per preset.
 - Items you aren't allowed to book can't be added to presets. If permissions change later, the add skips them and reports it.
 - Alternates are chosen by you. The script doesn't guess which units are interchangeable.
 - The warning check is a word match on Connect2's item notes, so it can miss oddly worded rules or flag harmless ones.

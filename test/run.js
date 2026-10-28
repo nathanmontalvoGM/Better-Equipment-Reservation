@@ -88,6 +88,8 @@ function loadPage({ page = 'resource', edit, prompts = [], booked = [], limits =
     w, root, postbacks, fetches, confirms,
     field: (name) => w.document.querySelector(`input[id$="editResourceBookingsTime_datetime_${name}_textbox"]`).value,
     button: (label) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === label),
+    // A collapsible section's header, by its title ("Dates", "Preset", "More")
+    card: (title) => [...root.querySelectorAll('.card-h')].find((b) => b.querySelector('.card-t').textContent === title),
     toggle: (id) => w.document.querySelector(`.resource-availability[data-id="${id}"]`).closest('li').querySelector('.c2p-toggle'),
     status: () => (root.querySelector('.status') || { textContent: '' }).textContent,
     save() { storage = {}; for (let i = 0; i < w.localStorage.length; i++) { const k = w.localStorage.key(i); storage[k] = w.localStorage.getItem(k); } },
@@ -109,7 +111,7 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   resetStorage();
   let p = loadPage({ prompts: ['A-cam package'] });
   check(!!p.root.querySelector('.panel'), 'panel renders');
-  p.button('New').click();
+  p.button('+ New preset').click();
   check(p.w.document.querySelectorAll('.c2p-toggle').length === 15, 'a pick button is added to all 15 listed items');
   p.toggle(ID.tripod).click();
   p.toggle(ID.light300d).click();
@@ -131,7 +133,7 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   p.toggle(ID.fog).click(); // remove fog again
   p.toggle(ID.arri1).click();
   const arriSlot = p.get('presets')['A-cam package'].slots.length - 1;
-  [...p.root.querySelectorAll('li.slot')][arriSlot].querySelector('button[title^="Add interchangeable"]').click();
+  [...p.root.querySelectorAll('li.slot')][arriSlot].querySelector('button[title^="Add backups"]').click();
   check(p.toggle(ID.arri3).textContent === '+ Alt', 'alternate mode relabels list buttons to "+ Alt"');
   p.toggle(ID.arri3).click();
   p.toggle(ID.arri4).click();
@@ -156,7 +158,7 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   ] } });
   storage['c2presets.ui'] = JSON.stringify({ current: 'Kit', open: true });
   p = loadPage();
-  p.button('Add all to basket').click();
+  p.button('Add to basket').click();
   await until(() => p.postbacks.length);
   check(/ctl04_bookBtn$/.test(p.postbacks[0] || ''), 'skips the not-bookable dolly and clicks the 300D');
   p.save();
@@ -183,8 +185,8 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   ] } });
   storage['c2presets.ui'] = JSON.stringify({ current: 'Lights', open: true });
   p = loadPage({ edit: withDates, booked: [ID.arri1] });
-  check(p.root.textContent.includes('10/20/2026 09:00 → 10/22/2026 17:00'), 'reads the dates Connect2 uses after Go');
-  p.button('Add all to basket').click();
+  check(p.button('Add to basket').title.includes('10/20/2026 09:00 → 10/22/2026 17:00'), 'falls back to the dates in Connect2\'s own Availability box');
+  p.button('Add to basket').click();
   await until(() => p.postbacks.length);
   check(/ctl11_bookBtn$/.test(p.postbacks[0] || ''), 'Kit #1 is booked, so it clicks Kit #3 instead');
   p.save();
@@ -201,11 +203,10 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   ] } });
   storage['c2presets.ui'] = JSON.stringify({ current: 'Lights', open: true });
   p = loadPage({ edit: withDates, booked: [ID.arri1, ID.arri3] });
-  p.button('Check availability').click();
-  await until(() => /slot\(s\) have no free unit|has a free unit/.test(p.status()));
-  check(/1 of 2 slot\(s\) have no free unit .*Arri Kit #1/.test(p.status()), 'flags the slot with no free unit');
-  const badges = [...p.root.querySelectorAll('.badge')].map((b) => b.textContent);
-  check(badges.join() === 'Not available,Not available,Available', 'shows a badge for each unit checked');
+  await until(() => p.root.querySelectorAll('li.slot .badge:not(.pending)').length === 3);
+  const badges = [...p.root.querySelectorAll('li.slot .badge')].map((b) => b.textContent);
+  check(badges.join() === 'Not available,Not available,Available', 'checks the preset by itself and shows a badge for each unit');
+  check(p.fetches.length === 3, 'only the preset\'s units: Connect2 marks the list itself for its own dates');
 
   console.log('Date ranges → bookings');
   resetStorage();
@@ -217,30 +218,37 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   storage['c2presets.presets'] = JSON.stringify({ Lights: { category: 'Media Arts Equipment', slots: [
     { options: [{ id: ID.arri1, name: 'Arri Softbank 1x650w 2x150w Three Light Kit #1 DD4' }, { id: ID.arri3, name: 'Arri Softbank 1x650W 2x150W 3 Light Kit #3 DD4' }] },
   ] } });
-  storage['c2presets.ui'] = JSON.stringify({ current: 'Lights', open: true, showDays: true });
+  storage['c2presets.ui'] = JSON.stringify({ current: 'Lights', open: true });
   storage['c2presets.schedule'] = JSON.stringify({ ranges });
   p = loadPage();
-  const summaries = () => [...p.root.querySelectorAll('.range > .muted')].map((d) => d.textContent);
-  check(summaries().join(' | ') === 'Fri 10/25 9:00 AM → Sun 10/27 5:00 PM · 3 days | Mon 10/28 9:00 AM → 5:00 PM · 1 day | Wed 10/30 6:00 PM → Thu 10/31 8:00 AM · 2 days',
-    'each range shows as one booking with its length');
-  check(!!p.button('Book 3 bookings'), 'offers to book 3 bookings');
-  check(p.root.querySelectorAll('.range input[type=date]').length === 6, 'each range has a pickup date and a return date');
+  const labels = () => [...p.root.querySelectorAll('.range .pick .rl')].map((b) => b.textContent);
+  check(labels().join(' | ') === 'Fri 10/25 9 AM → Sun 10/27 5 PM · 3 days | Mon 10/28 9 AM → 5 PM · 1 day | Wed 10/30 6 PM → Thu 10/31 8 AM · 2 days',
+    'each date range is one line with its length');
+  check(p.root.querySelectorAll('.range.active').length === 1 && p.root.querySelector('.range.active .dot').textContent === '●', 'the first range is selected');
+  check(!!p.button('Book 3 date ranges'), 'offers to book all 3');
+  check(p.root.querySelectorAll('.range input').length === 0, 'no date fields until you press Edit');
+  const rangeEl = (row) => p.root.querySelectorAll('.range')[row];
+  rangeEl(1).querySelector('button.link').click(); // Edit
+  check(rangeEl(1).querySelectorAll('input[type=date]').length === 2 && p.root.querySelectorAll('.range input').length === 4, 'Edit opens that range\'s pickup and return fields');
 
-  const dateInput = (row, which) => p.root.querySelectorAll('.range')[row].querySelectorAll('input[type=date]')[which];
+  const dateInput = (row, which) => rangeEl(row).querySelectorAll('input[type=date]')[which];
   const setInput = (input, v) => { input.value = v; input.dispatchEvent(new p.w.Event('change')); };
   setInput(dateInput(1, 0), '2030-11-04');
   let saved = p.get('schedule').ranges[1];
   check(saved.startDate === '2030-11-04' && saved.endDate === '2030-11-04', 'moving a pickup date moves its return date too');
   setInput(dateInput(1, 1), '2030-11-08');
-  check(p.root.querySelectorAll('.range')[1].textContent.includes('⚠ longer than the 3-day maximum'), 'warns when a range is over 3 days');
+  check(rangeEl(1).textContent.includes('⚠ longer than the 3-day maximum'), 'warns when a range is over 3 days');
   setInput(dateInput(1, 1), '2030-11-03');
-  check(p.root.querySelectorAll('.range')[1].textContent.includes('⚠ return is not after pickup') && p.button('Book 3 bookings').disabled,
+  check(rangeEl(1).textContent.includes('⚠ return is not after pickup') && p.button('Book 3 date ranges').disabled,
     'a return before pickup is flagged and blocks booking');
 
-  p.button('+ Date range').click();
+  p.button('+ Add dates').click();
   saved = p.get('schedule').ranges[3];
   check(saved.startDate === '2030-11-01' && saved.endDate === '2030-11-02' && saved.startTime === '18:00' && saved.endTime === '08:00',
-    '+ Date range starts the day after the last return, with the same length and times');
+    '+ Add dates starts the day after the last return, with the same length and times');
+  check(p.get('ui').activeRange === 3 && p.get('ui').editRange === 3, 'and selects it, open for editing');
+  rangeEl(3).querySelector('.x').click();
+  check(p.get('schedule').ranges.length === 3 && p.get('ui').activeRange === 2, '× removes it and selects the one before');
 
   resetStorage();
   storage['c2presets.schedule'] = JSON.stringify({ days: [{ date: '2030-10-25', start: '09:00', end: '17:00' }, { date: '2030-10-30', start: '18:00', end: '08:00' }], merge: true });
@@ -252,7 +260,7 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
 
   resetStorage();
   storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2020-01-06', startTime: '09:00', endDate: '2020-01-06', endTime: '17:00' }] });
-  storage['c2presets.ui'] = JSON.stringify({ open: true, showDays: true });
+  storage['c2presets.ui'] = JSON.stringify({ open: true });
   storage['c2presets.presets'] = JSON.stringify({ X: { category: '', slots: [{ options: [{ id: '900', name: 'Tripod' }] }] } });
   p = loadPage();
   check(p.root.textContent.includes('⚠ starts in the past'), 'warns about a range in the past');
@@ -262,10 +270,10 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   storage['c2presets.presets'] = JSON.stringify({ Lights: { category: 'Media Arts Equipment', slots: [
     { options: [{ id: ID.arri1, name: 'Arri Softbank 1x650w 2x150w Three Light Kit #1 DD4' }, { id: ID.arri3, name: 'Arri Softbank 1x650W 2x150W 3 Light Kit #3 DD4' }] },
   ] } });
-  storage['c2presets.ui'] = JSON.stringify({ current: 'Lights', open: true, showDays: true });
+  storage['c2presets.ui'] = JSON.stringify({ current: 'Lights', open: true });
   storage['c2presets.schedule'] = JSON.stringify({ ranges });
   p = loadPage({ booked: [ID.arri1] });
-  p.button('Book 3 bookings').click();
+  p.button('Book 3 date ranges').click();
   await until(() => p.postbacks.length);
   const checkedStarts = [...new Set(p.fetches.map((f) => f.start + '–' + f.end))].join(', ');
   check(checkedStarts === '10/25/2030–10/27/2030, 10/28/2030–10/28/2030, 10/30/2030–10/31/2030', 'checks every booking\'s own dates before starting: ' + checkedStarts);
@@ -316,9 +324,9 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   (p.button('Stop run') || p.button('End run')).click();
   check(p.get('run') === null, 'the run can be ended');
 
-  console.log('Checking ranges before a run');
+  console.log('The preset, checked for the selected dates');
   resetStorage();
-  // Mon 10/28/2030 9:00 AM → Wed 10/30/2030 5:00 PM; cage closes 4:30 PM; the 300D is due back 2:00 PM Wed;
+  // Mon 10/28/2030 9:00 AM → Wed 10/30/2030 5:00 PM; the 300D is due back 2:00 PM Wed;
   // the tripod can't be collected until 10:00 AM Mon; Arri Kit #1 is due back early but Kit #3 is free.
   const limits = { [ID.light300d]: { ret: '2:00 PM' }, [ID.tripod]: { collect: '10:00 AM' }, [ID.arri1]: { ret: '12:00 PM' }, [ID.arri3]: { ret: '5:30 PM' } };
   storage['c2presets.presets'] = JSON.stringify({ Kit: { category: 'Media Arts Equipment', slots: [
@@ -326,27 +334,29 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
     { options: [{ id: ID.tripod, name: '3 Pod Tripod' }] },
     { options: [{ id: ID.arri1, name: 'Arri Kit #1' }, { id: ID.arri3, name: 'Arri Kit #3' }] },
   ] } });
-  storage['c2presets.ui'] = JSON.stringify({ current: 'Kit', open: true, showDays: true });
+  storage['c2presets.ui'] = JSON.stringify({ current: 'Kit', open: true });
   storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-30', endTime: '17:00' }] });
   p = loadPage({ limits });
-  p.button('Check ranges').click();
-  await until(() => p.root.querySelector('.report, .okline'), 6000);
-  const report = () => (p.root.querySelector('.range .report') || { textContent: '' }).textContent;
-  check(report().includes('✗ Aputure 300D: return by 2:00 PM Wed 10/30'), 'flags an item due back before the return time');
-  check(report().includes('✗ 3 Pod Tripod: collect from 10:00 AM Mon 10/28'), 'flags an item not ready by the pickup time');
-  check(!report().includes('Arri'), 'a slot is fine when one of its alternates fits');
-  check(!!p.button('Or change the times: Mon 10/28 10:00 AM → Wed 10/30 2:00 PM'), 'offers the narrower times that would fit everything');
-  p.button('Or change the times: Mon 10/28 10:00 AM → Wed 10/30 2:00 PM').click();
+  await until(() => !p.root.querySelector('li.slot .badge.pending') && p.root.querySelectorAll('li.slot .badge').length === 4, 8000);
+  const slotBadgeTexts = () => [...p.root.querySelectorAll('li.slot .badge')].map((b) => b.textContent).join(' | ');
+  check(slotBadgeTexts() === 'Return by 2:00 PM Wed 10/30 | Collect from 10:00 AM Mon 10/28 | Return by 12:00 PM Wed 10/30 | Available',
+    'checks the preset by itself and badges each unit for the selected times: ' + slotBadgeTexts());
+  const slotEls = () => [...p.root.querySelectorAll('li.slot')];
+  check(slotEls()[0].textContent.includes('Find a replacement') && slotEls()[1].textContent.includes('Find a replacement') && !slotEls()[2].textContent.includes('Find a replacement'),
+    'items with nothing that fits offer a replacement; a slot is fine when an alternate fits');
+  const fitBtn = () => [...p.root.querySelectorAll('button')].find((b) => b.textContent.startsWith('Fit times'));
+  check(fitBtn() && fitBtn().textContent === 'Fit times: Mon 10/28 10 AM → Wed 10/30 2 PM', 'offers the narrower times that would fit everything');
+  fitBtn().click();
   const fixed = p.get('schedule').ranges[0];
-  check(fixed.startTime === '10:00' && fixed.endTime === '14:00' && fixed.endDate === '2030-10-30', 'one click changes the range to those times');
-  await until(() => p.root.querySelector('.okline'), 6000);
-  check(!!p.root.querySelector('.okline'), 'and the re-check comes back clear');
+  check(fixed.startTime === '10:00' && fixed.endTime === '14:00' && fixed.endDate === '2030-10-30', 'one click changes the dates to those times');
+  await until(() => !p.root.querySelector('li.slot .badge.pending') && !fitBtn() && !p.root.textContent.includes('Find a replacement'), 8000);
+  check(!fitBtn() && !p.root.textContent.includes('Find a replacement'), 'and the preset now fits');
   p.save();
 
   console.log('Starting a run warns about problems first');
   storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-30', endTime: '17:00' }] });
   p = loadPage({ limits });
-  p.button('Book 1 booking').click();
+  p.button('Book 1 date range').click();
   await until(() => (p.get('run') || {}).stage === 'gate', 6000);
   const startMsg = p.confirms.find((m) => m.startsWith('Make 1 booking')) || '';
   check(/⚠ Aputure 300D: return by 2:00 PM/.test(startMsg) && /probably reject/.test(startMsg), 'the start confirmation lists the problems');
@@ -397,7 +407,10 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   const cat = p.get('catalog');
   check(Object.keys(cat).length === 15 && cat[ID.light300d].type === 'LED Light Kits' && cat[ID.dolly].allowed === false,
     'remembers every item on the list page, with its category and whether you can book it');
-  p.button('Rescan list (15)').click();
+  check(!p.button('Rescan equipment list'), 'scan and export live under More, closed by default');
+  p.card('More').click();
+  check(p.root.textContent.includes('Replacement suggestions draw on 15 known items.'), 'More says how many items the script knows');
+  p.button('Rescan equipment list').click();
   check(/resourcePager_LinkButtonNext$/.test(p.postbacks[0] || '') && !!p.get('scan'), 'scanning pages forward through the list');
   p.save();
   const lastPage = (h) => h.replace(/<a id="[^"]*resourcePager2?_LinkButtonNext"[^>]*>&gt;<\/a>/g, '');
@@ -408,15 +421,14 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   p = loadPage({ edit: (h) => h.replace('<li class="disabled"><span>&lt;</span></li>', '<li><a id="x_resourcePager_LinkButtonPrevious" href="#">&lt;</a></li>') }); await wait();
   check(p.postbacks[0] === 'x_resourcePager_LinkButtonPrevious', 'starting mid-list, it goes back to page 1 first');
 
-  console.log('Replacements in Check ranges');
+  console.log('Replacements for the selected dates');
   resetStorage();
   storage['c2presets.presets'] = JSON.stringify({ Kit: { category: 'Media Arts Equipment', slots: [{ options: [{ id: ID.light300d, name: 'Aputure 300D Light with Fresnel 2x Lens CC3' }] }] } });
-  storage['c2presets.ui'] = JSON.stringify({ current: 'Kit', open: true, showDays: true });
+  storage['c2presets.ui'] = JSON.stringify({ current: 'Kit', open: true });
   storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-30', endTime: '17:00' }] });
   p = loadPage({ booked: [ID.light300d] });
-  p.button('Check ranges').click();
-  await until(() => p.root.querySelector('.report'), 6000);
-  check(report().includes('✗ Aputure 300D Light with Fresnel 2x Lens CC3: not free'), 'flags the booked item');
+  await until(() => p.button('Find a replacement'), 8000);
+  check(p.root.querySelector('li.slot .badge').textContent === 'Not available', 'the booked item is marked in the preset');
   p.button('Find a replacement').click();
   await until(() => p.root.querySelector('.cand'), 6000);
   const cands = () => [...p.root.querySelectorAll('.cand > span')].map((x) => x.textContent);
@@ -425,8 +437,9 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   check(!cands().some((c) => /Arri|Fresnel for/.test(c)), 'skips items from other categories (tungsten kits, accessories)');
   p.button('+ Use as alternate').click();
   check(slotIds(p.get('presets').Kit) === ID.light300d + '|691', 'picking one adds it as an alternate');
-  await until(() => p.root.querySelector('.okline'), 6000);
-  check(!!p.root.querySelector('.okline'), 'and the range now checks clear');
+  await until(() => p.root.querySelectorAll('li.slot .badge').length === 2 && !p.root.querySelector('li.slot .badge.pending'), 6000);
+  check([...p.root.querySelectorAll('li.slot .badge')].map((b) => b.textContent).join() === 'Not available,Available' && !p.button('Find a replacement'),
+    'and the slot is covered for those dates');
 
   console.log('Replacements during a run');
   resetStorage();
@@ -434,11 +447,11 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
     { options: [{ id: ID.light300d, name: 'Aputure 300D Light with Fresnel 2x Lens CC3' }] },
     { options: [{ id: ID.tripod, name: '3 Pod V4AH Tripod Y4-Y5' }] },
   ] } });
-  storage['c2presets.ui'] = JSON.stringify({ current: 'Kit', open: true, showDays: true });
+  storage['c2presets.ui'] = JSON.stringify({ current: 'Kit', open: true });
   storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-30', endTime: '17:00' }] });
   const snapshot = { ...storage };
   p = loadPage({ booked: [ID.light300d] });
-  p.button('Book 1 booking').click();
+  p.button('Book 1 date range').click();
   await until(() => (p.get('run') || {}).stage === 'gate', 6000);
   p.button('Find a replacement').click();
   await until(() => p.root.querySelector('.run .cand'), 6000);
@@ -449,7 +462,7 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
 
   storage = { ...snapshot };
   p = loadPage({ booked: [ID.light300d] });
-  p.button('Book 1 booking').click();
+  p.button('Book 1 date range').click();
   await until(() => (p.get('run') || {}).stage === 'gate', 6000);
   p.button('Leave it out').click();
   await until(() => p.postbacks.length, 6000);
@@ -485,59 +498,100 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   check(p.status().includes('press Back, empty your basket, then press Redo booking 1'), 'and says how to use it for this booking');
   check(p.postbacks.length === 0, 'without clicking anything on the page');
 
-  console.log('Check dates: availability next to every item');
+  console.log('Badges next to every item for the selected dates');
   resetStorage();
   const shootLimits = { [ID.tripod]: { collect: '10:00 AM' } };
   p = loadPage({ booked: [ID.light300d], limits: shootLimits });
-  const shootInput = (i) => p.root.querySelectorAll('.shoot input')[i]; // 0 pickup date, 1 pickup time, 2 return date, 3 return time
-  check(!!p.root.querySelector('.shoot') && p.root.textContent.includes('Pick when you need gear'), 'the panel has a Check dates section, even with no presets');
-  setInput(shootInput(0), '2030-10-28');
-  check(JSON.stringify(p.get('shoot')) === JSON.stringify({ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-28', endTime: '16:30' }),
-    'picking a pickup date fills in the return date and default times');
+  check(p.root.textContent.includes('Add when you need gear') && p.root.textContent.includes('Save the gear you book every week'), 'with nothing set up, each section says what it\'s for');
+  p.button('+ Add dates').click();
+  setInput(dateInput(0, 0), '2030-10-28');
+  check(JSON.stringify(p.get('schedule').ranges) === JSON.stringify([{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-28', endTime: '16:30' }]),
+    'new dates start as a 9:00 AM to 4:30 PM day, and the return date follows the pickup date');
   const badgeOf = (id) => {
     const b = p.w.document.querySelector(`.resource-availability[data-id="${id}"]`).closest('li').querySelector('.c2p-avail');
     return b ? b.textContent : null;
   };
-  await until(() => !p.w.document.querySelector('.c2p-avail-pending'), 8000);
+  await until(() => p.w.document.querySelector('.c2p-avail') && !p.w.document.querySelector('.c2p-avail-pending'), 8000);
   check(p.fetches.length === 14 && p.fetches.every((f) => f.start === '10/28/2030' && f.end === '10/28/2030'), 'checks the 14 bookable items on the page for those dates');
   check(badgeOf(ID.fog) === '✓ Free for your dates', 'a free item says so');
   check(badgeOf(ID.light300d).startsWith('✗ Not free for your dates'), 'a booked item says so');
   check(badgeOf(ID.tripod) === '⚠ Collect from 10:00 AM Mon 10/28', 'an item free but not by the pickup time says when');
   check(badgeOf(ID.dolly) === null, 'items you can\'t book get no badge');
-  check(p.root.querySelector('.shoot').textContent.includes('This page: 12 free · 1 with a time problem · 1 not free'), 'the panel sums up the page');
+  await until(() => p.root.querySelector('.range.active .extras'), 4000);
+  check(p.root.querySelector('.range.active .extras').textContent.includes('This page: 12 free · 1 with a time problem · 1 not free'), 'the selected range sums up the page');
   p.save();
 
   p = loadPage({ booked: [ID.light300d], limits: shootLimits });
-  await until(() => !p.w.document.querySelector('.c2p-avail-pending'), 8000);
+  await until(() => p.w.document.querySelector('.c2p-avail') && !p.w.document.querySelector('.c2p-avail-pending'), 8000);
   check(badgeOf(ID.fog) === '✓ Free for your dates', 'the dates carry over to the next page or reload');
-  setInput(shootInput(2), '2030-10-30');
+  setInput(dateInput(0, 1), '2030-10-30');
   await until(() => p.fetches.some((f) => f.end === '10/30/2030') && !p.w.document.querySelector('.c2p-avail-pending'), 8000);
   check(p.fetches.filter((f) => f.end === '10/30/2030').length === 14, 'changing the return date re-checks the page');
-  setInput(shootInput(3), '08:00');
-  setInput(shootInput(2), '2030-10-28');
-  check(p.root.querySelector('.shoot').textContent.includes('⚠ Return must be after pickup.') && !p.w.document.querySelector('.c2p-avail'),
+  rangeEl(0).querySelectorAll('input[type=time]')[1].value = '08:00';
+  rangeEl(0).querySelectorAll('input[type=time]')[1].dispatchEvent(new p.w.Event('change'));
+  setInput(dateInput(0, 1), '2030-10-28');
+  check(rangeEl(0).textContent.includes('⚠ return is not after pickup') && !p.w.document.querySelector('.c2p-avail'),
     'a return before pickup is flagged and badges are hidden');
-  setInput(shootInput(3), '16:30');
-  p.button('+ Add to date ranges').click();
-  check(JSON.stringify(p.get('schedule').ranges) === JSON.stringify([{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-28', endTime: '16:30' }]),
-    '"+ Add to date ranges" turns the check dates into a booking range');
-  p.root.querySelector('.shoot .linkish').click(); // Clear
-  check(p.get('shoot') === null && !p.w.document.querySelector('.c2p-avail'), 'Clear removes the dates and the badges');
+  rangeEl(0).querySelectorAll('input[type=time]')[1].value = '16:30';
+  rangeEl(0).querySelectorAll('input[type=time]')[1].dispatchEvent(new p.w.Event('change'));
+  p.button('Done').click();
+  p.button('+ Add dates').click(); // Tue 10/29
+  await until(() => p.fetches.some((f) => f.start === '10/29/2030') && !p.w.document.querySelector('.c2p-avail-pending'), 8000);
+  check(p.get('ui').activeRange === 1 && p.fetches.filter((f) => f.start === '10/29/2030').length === 14, 'new dates are selected and the page is checked for them');
+  const before = p.fetches.length;
+  rangeEl(0).querySelector('.pick').click();
+  check(p.get('ui').activeRange === 0 && badgeOf(ID.fog) === '✓ Free for your dates' && p.fetches.length === before, 'selecting other dates switches the badges, from what was already checked');
+  rangeEl(1).querySelector('.x').click();
+  rangeEl(0).querySelector('.x').click();
+  check(p.get('schedule').ranges.length === 0 && !p.w.document.querySelector('.c2p-avail'), 'removing the dates removes the badges');
 
-  console.log('Presets use the check dates');
+  console.log('v0.7 check dates move into the dates list');
   resetStorage();
   storage['c2presets.presets'] = JSON.stringify({ Lights: { category: 'Media Arts Equipment', slots: [
     { options: [{ id: ID.arri1, name: 'Arri Kit #1' }, { id: ID.arri3, name: 'Arri Kit #3' }] },
   ] } });
   storage['c2presets.ui'] = JSON.stringify({ current: 'Lights', open: true });
+  storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2030-11-04', startTime: '09:00', endDate: '2030-11-04', endTime: '16:30' }] });
   storage['c2presets.shoot'] = JSON.stringify({ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-29', endTime: '16:30' });
   p = loadPage({ booked: [ID.arri1] });
-  await until(() => !p.w.document.querySelector('.c2p-avail-pending'), 8000);
+  check(p.get('schedule').ranges.length === 2 && p.get('schedule').ranges[1].startDate === '2030-10-28' && p.get('ui').activeRange === 1 && p.get('shoot') === null,
+    'old check dates become a date range, and stay selected');
+  await until(() => p.root.querySelectorAll('li.slot .badge').length === 2 && !p.root.querySelector('li.slot .badge.pending'), 8000);
   const slotBadges = [...p.root.querySelectorAll('li.slot .badge')].map((b) => b.textContent).join();
-  check(slotBadges === 'Not available,Available', 'the preset shows each unit\'s availability for the check dates: ' + slotBadges);
-  p.button('Add all to basket').click();
+  check(slotBadges === 'Not available,Available', 'the preset shows each unit\'s availability for the selected dates: ' + slotBadges);
+  p.button('or just add to basket').click();
   await until(() => p.postbacks.length, 6000);
-  check(/ctl11_bookBtn$/.test(p.postbacks[0] || ''), 'adding picks Kit #3 for those dates, without Connect2\'s Availability box');
+  check(/ctl11_bookBtn$/.test(p.postbacks[0] || ''), '"or just add to basket" picks Kit #3 for those dates');
+
+  console.log('Collapsible sections and a quieter preset');
+  resetStorage();
+  storage['c2presets.presets'] = JSON.stringify({ 'Catio Doc': { category: 'Media Arts Equipment', slots: [
+    { options: [{ id: ID.arri1, name: 'Arri Kit #1' }, { id: ID.arri3, name: 'Arri Kit #3' }] }, { options: [{ id: ID.tripod, name: '3 Pod Tripod' }] },
+  ] }, Audio: { category: 'Media Arts Equipment', slots: [] } });
+  storage['c2presets.ui'] = JSON.stringify({ current: 'Catio Doc', open: true });
+  p = loadPage();
+  check(!p.root.querySelector('li.slot .tools') && !p.root.querySelector('li.slot .x') && !p.button('Rename'), 'outside Edit, the preset shows just the items: no +alt, ×, Rename or Delete');
+  p.button('Edit').click();
+  check(p.root.querySelectorAll('li.slot .tools').length === 2 && !!p.button('Rename') && !!p.button('Delete preset') && p.w.document.querySelectorAll('.c2p-toggle').length === 15,
+    'Edit shows the controls and the "+ Preset" buttons on the list');
+  p.button('Done').click();
+  check(p.w.document.querySelectorAll('.c2p-toggle').length === 0, 'Done hides them again');
+  check(!p.card('Dates').querySelector('.card-m') && !p.card('Preset').querySelector('.card-m'), 'open sections don\'t repeat themselves in their headers');
+  p.card('Preset').click();
+  check(!p.root.querySelector('li.slot') && p.card('Preset').textContent.includes('Catio Doc · 2 items') && p.get('ui').showPresets === false,
+    'the Preset section collapses to one line with the preset\'s name');
+  p.save();
+  p = loadPage();
+  check(!p.root.querySelector('li.slot') && p.card('Preset').getAttribute('aria-expanded') === 'false', 'and stays collapsed on the next page');
+  p.card('Preset').click();
+  p.card('Dates').click();
+  check(!!p.root.querySelector('li.slot') && !p.button('+ Add dates') && p.card('Dates').textContent.includes('none yet'), 'the Dates section collapses too');
+  const sel = p.root.querySelector('select[aria-label="Preset"]');
+  check([...sel.options].map((o) => o.textContent).join() === 'Catio Doc (2),Audio (0),+ New preset…', 'the preset picker lists presets and "+ New preset…"');
+  p.w.prompt = () => 'Interview audio';
+  sel.value = sel.options[2].value;
+  sel.dispatchEvent(new p.w.Event('change'));
+  check(p.get('ui').current === 'Interview audio' && p.get('ui').editing === true, '"+ New preset…" makes a preset and opens it for editing');
 
   console.log('Preset button layout');
   resetStorage();
@@ -551,8 +605,8 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   check(tb.style.boxSizing === 'border-box' && tb.style.maxWidth === '100%' && tb.parentElement.style.flex.startsWith('0 0 100%') && area.style.flexWrap === 'wrap',
     'and is sized to fit inside the item instead of overflowing it');
   check(p.w.document.querySelectorAll('.c2p-under').length === 15, 'one per item, with no duplicates after re-rendering');
-  p.button('Done picking').click();
-  check(p.w.document.querySelectorAll('.c2p-under').length === 0, 'and they go away when picking is done');
+  p.button('Done').click();
+  check(p.w.document.querySelectorAll('.c2p-under').length === 0, 'and they go away when editing is done');
 
   console.log('Saved pages with a leftover panel');
   p = loadPage({ page: 'time', edit: (h) => h.replace('</form>', '</form><div id="c2presets-host"></div>') });
