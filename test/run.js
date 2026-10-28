@@ -10,7 +10,7 @@ const FIXTURES = {
   time: fs.readFileSync(path.join(__dirname, 'fixtures/select-time.html'), 'utf8'),
   clash: fs.readFileSync(path.join(__dirname, 'fixtures/select-time-clash.html'), 'utf8'), // rejected Update
 };
-const SCRIPT = fs.readFileSync(path.join(__dirname, '../src/connect2-gear-presets.user.js'), 'utf8');
+const SCRIPT = fs.readFileSync(path.join(__dirname, '../src/better-checkout.user.js'), 'utf8');
 const URL = 'https://mtsu.getconnect2.com/wizard/multiresource.aspx';
 
 // Resource ids on the fixture page (button suffix in parentheses)
@@ -121,7 +121,7 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   resetStorage();
   let p = loadPage({ prompts: ['A-cam package'] });
   check(!!p.root.querySelector('.panel'), 'panel renders');
-  p.button('+ New preset').click();
+  p.button('New gear list').click();
   check(p.w.document.querySelectorAll('.c2p-toggle').length === 15, 'a pick button is added to all 15 listed items');
   p.toggle(ID.tripod).click();
   p.toggle(ID.light300d).click();
@@ -144,11 +144,11 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   p.toggle(ID.arri1).click();
   const arriSlot = p.get('presets')['A-cam package'].slots.length - 1;
   [...p.root.querySelectorAll('li.slot')][arriSlot].querySelector('button[title^="Add backups"]').click();
-  check(p.toggle(ID.arri3).textContent === '+ Alt', 'alternate mode relabels list buttons to "+ Alt"');
+  check(p.toggle(ID.arri3).textContent === '+ Backup', 'alternate mode relabels list buttons to "+ Backup"');
   p.toggle(ID.arri3).click();
   p.toggle(ID.arri4).click();
   check(slotIds(p.get('presets')['A-cam package']) === '900,989,493|581|583', 'alternates join the chosen slot in order');
-  check(p.toggle(ID.arri3).textContent === '✓ Alternate', 'alternates are marked in the list');
+  check(p.toggle(ID.arri3).textContent === '✓ Backup', 'alternates are marked in the list');
   p.toggle(ID.arri4).click();
   check(slotIds(p.get('presets')['A-cam package']) === '900,989,493|581', 'clicking a marked alternate removes it');
   p.save();
@@ -185,7 +185,7 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   check(/Added 1 of 2/.test(s1), 'summary counts slots: 1 of 2');
   check(/used Aputure 300D .* instead of 3Pod VT-2/.test(s1) && /not allowed to book/.test(s1), 'summary says which alternate was used and why');
   check(/Couldn't add Zoom F8n Recorder R1: .*not found by search/.test(s1), 'summary names the slot it couldn\'t fill');
-  check(/No dates were set/.test(s1), 'summary explains alternates weren\'t date-checked');
+  check(/No dates were picked/.test(s1), 'summary explains alternates weren\'t date-checked');
   check(p.get('queue') === null && p.postbacks.length === 0, 'queue is cleared and nothing else is clicked');
 
   console.log('Connect2\'s own Availability box');
@@ -201,17 +201,17 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
     'its date-only box is hidden, with the helper\'s box in its place');
   check(JSON.stringify(p.get('schedule').ranges) === JSON.stringify([{ startDate: '2026-10-20', startTime: '09:00', endDate: '2026-10-22', endTime: '17:00' }]) && p.get('ui').activeRange === 0,
     'dates already set there are carried over and selected');
-  check(p.status().includes('Using the dates from Connect2\'s Availability box: Tue 10/20 9 AM → Thu 10/22 5 PM'), 'and it says so');
+  check(p.status().includes('Better Checkout is using the dates from Connect2\'s Availability box: Tue 10/20 9 AM → Thu 10/22 5 PM'), 'and it says so');
   check(note().textContent.includes('Showing what\'s free Tue 10/20 9 AM → Thu 10/22 5 PM') && !!note().querySelector('.c2p-changedates'), 'the new box shows the dates with "Change dates"');
   check(p.w.document.body.classList.contains('c2p-own-avail'), 'and Connect2\'s own markers on the list are hidden, so they can\'t contradict the helper');
-  p.button('or just add to basket').click();
+  p.button('Add to basket only').click();
   await until(() => p.postbacks.length);
   check(/ctl11_bookBtn$/.test(p.postbacks[0] || ''), 'adding uses those dates: Kit #1 is booked, so it picks Kit #3');
   p.save();
   p = loadPage({ edit: both(withDates, withBasket(1)), booked: [ID.arri1] }); await wait();
   const s2 = p.status();
   check(/Added 1 of 1/.test(s2) && /used Arri Softbank 1x650W 2x150W 3 Light Kit #3 DD4 instead of .*Kit #1/.test(s2), 'summary reports the swap');
-  check(!/No dates were set/.test(s2), 'no missing-dates note when dates were set');
+  check(!/No dates were picked/.test(s2), 'no missing-dates note when dates were set');
   p.root.querySelectorAll('.range')[0].querySelector('.x').click();
   p.save();
   p = loadPage({ edit: withDates });
@@ -238,8 +238,8 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   check(!!itemLi(ID.fog).querySelector('.c2p-freepart button') && itemLi(ID.fog).querySelector('.c2p-freepart button').textContent === 'Use these dates', 'with "Use these dates"');
   check(itemLi(ID.tripod).querySelector('.c2p-avail').textContent.includes('Free Tue 11/5 10 AM → Thu 11/7 4:30 PM'), 'items free from a later pickup time get the same offer');
   const fogSlot = p.root.querySelector('li.slot').textContent;
-  check(fogSlot.includes('Part of the time') && fogSlot.includes('Free Wed 11/6 8 AM → Thu 11/7 12 PM') && !!p.button('Use these dates'), 'and in the preset');
-  check(!![...p.root.querySelectorAll('button')].find((b) => b.textContent === 'Fit times: Wed 11/6 8 AM → Thu 11/7 12 PM'), 'Fit times uses it too');
+  check(fogSlot.includes('Part of the time') && fogSlot.includes('Free Wed 11/6 8 AM → Thu 11/7 12 PM'), 'and in the gear list');
+  check(p.root.querySelector('.fit') && p.root.querySelector('.fit').textContent.includes('Everything in your list is free Wed 11/6 8 AM → Thu 11/7 12 PM.'), 'the whole-list time fix uses it too');
   itemLi(ID.fog).querySelector('.c2p-freepart button').click();
   check(JSON.stringify(p.get('schedule').ranges[0]) === JSON.stringify({ startDate: '2030-11-06', startTime: '08:00', endDate: '2030-11-07', endTime: '12:00' }),
     'pressing it changes your selected dates to those');
@@ -263,11 +263,11 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   storage['c2presets.ui'] = JSON.stringify({ current: 'Lights', open: true });
   storage['c2presets.schedule'] = JSON.stringify({ ranges });
   p = loadPage();
-  const labels = () => [...p.root.querySelectorAll('.range .pick .rl')].map((b) => b.textContent);
-  check(labels().join(' | ') === 'Fri 10/25 9 AM → Sun 10/27 5 PM · 3 days | Mon 10/28 9 AM → 5 PM · 1 day | Wed 10/30 6 PM → Thu 10/31 8 AM · 2 days',
+  const labels = () => [...p.root.querySelectorAll('.range .pick .rl')].map((b) => b.firstChild.textContent + ', ' + b.querySelector('.len').textContent);
+  check(labels().join(' | ') === 'Fri 10/25 9 AM → Sun 10/27 5 PM, 3 days | Mon 10/28 9 AM → 5 PM, 1 day | Wed 10/30 6 PM → Thu 10/31 8 AM, 2 days',
     'each date range is one line with its length');
   check(p.root.querySelectorAll('.range.active').length === 1 && p.root.querySelector('.range.active .dot').textContent === '●', 'the first range is selected');
-  check(!!p.button('Book 3 date ranges'), 'offers to book all 3');
+  check(!!p.button('Book all 3 dates'), 'offers to book all 3');
   check(p.root.querySelectorAll('.range input').length === 0, 'no date fields until you press Edit');
   const rangeEl = (row) => p.root.querySelectorAll('.range')[row];
   rangeEl(1).querySelector('button.link').click(); // Edit
@@ -281,7 +281,7 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   setInput(dateInput(1, 1), '2030-11-08');
   check(rangeEl(1).textContent.includes('⚠ longer than the 3-day maximum'), 'warns when a range is over 3 days');
   setInput(dateInput(1, 1), '2030-11-03');
-  check(rangeEl(1).textContent.includes('⚠ return is not after pickup') && p.button('Book 3 date ranges').disabled,
+  check(rangeEl(1).textContent.includes('⚠ return is not after pickup') && p.button('Book all 3 dates').disabled,
     'a return before pickup is flagged and blocks booking');
 
   p.button('+ Add dates').click();
@@ -315,7 +315,7 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   storage['c2presets.ui'] = JSON.stringify({ current: 'Lights', open: true });
   storage['c2presets.schedule'] = JSON.stringify({ ranges });
   p = loadPage({ booked: [ID.arri1] });
-  p.button('Book 3 date ranges').click();
+  p.button('Book all 3 dates').click();
   await until(() => p.postbacks.length);
   const checkedStarts = [...new Set(p.fetches.map((f) => f.start + '–' + f.end))].join(', ');
   check(checkedStarts === '10/25/2030–10/27/2030, 10/28/2030–10/28/2030, 10/30/2030–10/31/2030', 'checks every booking\'s own dates before starting: ' + checkedStarts);
@@ -382,29 +382,29 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   p = loadPage({ limits });
   await until(() => !p.root.querySelector('li.slot .badge.pending') && p.root.querySelectorAll('li.slot .badge').length === 4, 8000);
   const slotBadgeTexts = () => [...p.root.querySelectorAll('li.slot .badge')].map((b) => b.textContent).join(' | ');
-  check(slotBadgeTexts() === 'Return by 2:00 PM Wed 10/30 | Collect from 10:00 AM Mon 10/28 | Return by 12:00 PM Wed 10/30 | Available',
+  check(slotBadgeTexts() === 'Return by 2 PM Wed 10/30 | Collect from 10 AM Mon 10/28 | Return by 12 PM Wed 10/30 | Free',
     'checks the preset by itself and badges each unit for the selected times: ' + slotBadgeTexts());
   const slotEls = () => [...p.root.querySelectorAll('li.slot')];
-  check(slotEls()[0].textContent.includes('Find a replacement') && slotEls()[1].textContent.includes('Find a replacement') && !slotEls()[2].textContent.includes('Find a replacement'),
+  check(slotEls()[0].textContent.includes('Find something similar') && slotEls()[1].textContent.includes('Find something similar') && !slotEls()[2].textContent.includes('Find something similar'),
     'items with nothing that fits offer a replacement; a slot is fine when an alternate fits');
-  const fitBtn = () => [...p.root.querySelectorAll('button')].find((b) => b.textContent.startsWith('Fit times'));
-  check(fitBtn() && fitBtn().textContent === 'Fit times: Mon 10/28 10 AM → Wed 10/30 2 PM', 'offers the narrower times that would fit everything');
+  const fitBtn = () => [...p.root.querySelectorAll('button')].find((b) => b.textContent === 'Use those times');
+  check(fitBtn() && fitBtn().parentElement.textContent.startsWith('Everything in your list is free Mon 10/28 10 AM → Wed 10/30 2 PM.'), 'offers the narrower times that would fit everything');
   fitBtn().click();
   const fixed = p.get('schedule').ranges[0];
   check(fixed.startTime === '10:00' && fixed.endTime === '14:00' && fixed.endDate === '2030-10-30', 'one click changes the dates to those times');
-  await until(() => !p.root.querySelector('li.slot .badge.pending') && !fitBtn() && !p.root.textContent.includes('Find a replacement'), 8000);
-  check(!fitBtn() && !p.root.textContent.includes('Find a replacement'), 'and the preset now fits');
+  await until(() => !p.root.querySelector('li.slot .badge.pending') && !fitBtn() && !p.root.textContent.includes('Find something similar'), 8000);
+  check(!fitBtn() && !p.root.textContent.includes('Find something similar'), 'and the preset now fits');
   p.save();
 
   console.log('Starting a run warns about problems first');
   storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-30', endTime: '17:00' }] });
   p = loadPage({ limits });
-  p.button('Book 1 date range').click();
+  p.button('Book these dates').click();
   await until(() => (p.get('run') || {}).stage === 'gate', 6000);
-  const startMsg = p.confirms.find((m) => m.startsWith('Make 1 booking')) || '';
-  check(/⚠ Aputure 300D: return by 2:00 PM/.test(startMsg) && /probably reject/.test(startMsg), 'the start confirmation lists the problems');
+  const startMsg = p.confirms.find((m) => m.startsWith('Better Checkout: book')) || '';
+  check(/⚠ Aputure 300D: return by 2 PM/.test(startMsg) && /probably reject/.test(startMsg), 'the start confirmation lists the problems');
   const gateText = p.root.querySelector('.run').textContent;
-  check(p.postbacks.length === 0 && gateText.includes('Nothing has been added yet') && gateText.includes('✗ Aputure 300D: return by 2:00 PM') && gateText.includes('✗ 3 Pod Tripod'),
+  check(p.postbacks.length === 0 && gateText.includes('Nothing has been added yet') && gateText.includes('✗ Aputure 300D: return by 2 PM') && gateText.includes('✗ 3 Pod Tripod'),
     'before adding anything, the run stops on the items that don\'t fit');
   p.button('Add it anyway').click();
   check(p.root.querySelector('.run').textContent.includes('✓ Aputure 300D: adding it anyway'), 'records each choice');
@@ -451,14 +451,14 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   check(Object.keys(cat).length === 15 && cat[ID.light300d].type === 'LED Light Kits' && cat[ID.dolly].allowed === false,
     'remembers every item on the list page, with its category and whether you can book it');
   check(!p.button('Rescan equipment list'), 'scan and export live under More, closed by default');
-  p.card('More').click();
-  check(p.root.textContent.includes('Replacement suggestions draw on 15 known items.'), 'More says how many items the script knows');
+  p.card('Share and help').click();
+  check(p.root.textContent.includes('Knows 15 items for suggesting similar gear.'), 'More says how many items the script knows');
   p.button('Rescan equipment list').click();
   check(/resourcePager_LinkButtonNext$/.test(p.postbacks[0] || '') && !!p.get('scan'), 'scanning pages forward through the list');
   p.save();
   const lastPage = (h) => h.replace(/<a id="[^"]*resourcePager2?_LinkButtonNext"[^>]*>&gt;<\/a>/g, '');
   p = loadPage({ edit: lastPage }); await wait();
-  check(p.status().includes('Scan done: the script now knows 15 items (this list has 161)') && p.get('scan') === null, 'stops on the last page and reports what it saved');
+  check(p.status().includes('Scan done: Better Checkout now knows 15 items (this list has 161)') && p.get('scan') === null, 'stops on the last page and reports what it saved');
   resetStorage();
   storage['c2presets.scan'] = JSON.stringify({ phase: 'rewind', loads: 0 });
   p = loadPage({ edit: (h) => h.replace('<li class="disabled"><span>&lt;</span></li>', '<li><a id="x_resourcePager_LinkButtonPrevious" href="#">&lt;</a></li>') }); await wait();
@@ -470,18 +470,18 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   storage['c2presets.ui'] = JSON.stringify({ current: 'Kit', open: true });
   storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-30', endTime: '17:00' }] });
   p = loadPage({ booked: [ID.light300d] });
-  await until(() => p.button('Find a replacement'), 8000);
-  check(p.root.querySelector('li.slot .badge').textContent === 'Not available', 'the booked item is marked in the preset');
-  p.button('Find a replacement').click();
+  await until(() => p.button('Find something similar'), 8000);
+  check(p.root.querySelector('li.slot .badge').textContent === 'Not free', 'the booked item is marked in the preset');
+  p.button('Find something similar').click();
   await until(() => p.root.querySelector('.cand'), 6000);
   const cands = () => [...p.root.querySelectorAll('.cand > span')].map((x) => x.textContent);
   check(cands().join(' | ') === 'Aputure Amaran Tri-8 LED 3 Light Kit CC1-CC2 · LED Light Kits | Aputure Light Storm 120D LED 2 Light Kit DD4 · LED Light Kits | Aputure LS 600c Pro II RGB LED Monolight DD4 · LED Light Kits',
     'suggests similar lights that are free then, most similar first: ' + cands().join(' | '));
   check(!cands().some((c) => /Arri|Fresnel for/.test(c)), 'skips items from other categories (tungsten kits, accessories)');
-  p.button('+ Use as alternate').click();
+  p.button('Add as backup').click();
   check(slotIds(p.get('presets').Kit) === ID.light300d + '|691', 'picking one adds it as an alternate');
   await until(() => p.root.querySelectorAll('li.slot .badge').length === 2 && !p.root.querySelector('li.slot .badge.pending'), 6000);
-  check([...p.root.querySelectorAll('li.slot .badge')].map((b) => b.textContent).join() === 'Not available,Available' && !p.button('Find a replacement'),
+  check([...p.root.querySelectorAll('li.slot .badge')].map((b) => b.textContent).join() === 'Not free,Free' && !p.button('Find something similar'),
     'and the slot is covered for those dates');
 
   console.log('Replacements during a run');
@@ -494,9 +494,9 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-30', endTime: '17:00' }] });
   const snapshot = { ...storage };
   p = loadPage({ booked: [ID.light300d] });
-  p.button('Book 1 date range').click();
+  p.button('Book these dates').click();
   await until(() => (p.get('run') || {}).stage === 'gate', 6000);
-  p.button('Find a replacement').click();
+  p.button('Find something similar').click();
   await until(() => p.root.querySelector('.run .cand'), 6000);
   p.root.querySelector('.run .cand button').click(); // "Use" the first suggestion
   await until(() => p.postbacks.length, 6000);
@@ -505,7 +505,7 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
 
   storage = { ...snapshot };
   p = loadPage({ booked: [ID.light300d] });
-  p.button('Book 1 date range').click();
+  p.button('Book these dates').click();
   await until(() => (p.get('run') || {}).stage === 'gate', 6000);
   p.button('Leave it out').click();
   await until(() => p.postbacks.length, 6000);
@@ -532,11 +532,11 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   const runText = () => p.root.querySelector('.run').textContent;
   check(runText().includes('Replace Canon EF 24-105mm f/4L IS USM Lens?') && !runText().includes('Replace Canon C100'),
     'offers replacements only for items someone else has booked (not cage-hours clashes)');
-  p.button('Find a replacement').click();
+  p.button('Find something similar').click();
   await until(() => p.root.querySelector('.run .cand'), 6000);
   check(cands().join(' | ') === 'Canon EF 24-70mm f/2.8L II USM Lens · Cameras and Accessories | Tamron 24-70mm f/2.8 Di VC Lens N2 · Cameras and Accessories',
     'suggests similar lenses, closest first, not other gear: ' + cands().join(' | '));
-  p.button('+ Use as alternate').click();
+  p.button('Add as backup').click();
   check(slotIds(p.get('presets').Catio) === '5000|6001,6003', 'adds the lens as an alternate');
   check(p.status().includes('press Back, empty your basket, then press Redo booking 1'), 'and says how to use it for this booking');
   check(p.postbacks.length === 0, 'without clicking anything on the page');
@@ -545,7 +545,7 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   resetStorage();
   const shootLimits = { [ID.tripod]: { collect: '10:00 AM' } };
   p = loadPage({ booked: [ID.light300d], limits: shootLimits });
-  check(p.root.textContent.includes('Add when you need gear') && p.root.textContent.includes('Save the gear you book every week'), 'with nothing set up, each section says what it\'s for');
+  check(p.root.textContent.includes('Add when you\'ll pick up and return the gear') && p.root.textContent.includes('Save the gear you check out every time'), 'with nothing set up, each section says what it\'s for');
   p.button('+ Add dates').click();
   setInput(dateInput(0, 0), '2030-10-28');
   check(JSON.stringify(p.get('schedule').ranges) === JSON.stringify([{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-28', endTime: '16:30' }]),
@@ -558,10 +558,10 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   check(p.fetches.length === 14 && p.fetches.every((f) => f.start === '10/28/2030' && f.end === '10/28/2030'), 'checks the 14 bookable items on the page for those dates');
   check(badgeOf(ID.fog) === '✓ Free for your dates', 'a free item says so');
   check(badgeOf(ID.light300d).startsWith('✗ Not free for your dates'), 'a booked item says so');
-  check(badgeOf(ID.tripod) === '⚠ Collect from 10:00 AM Mon 10/28', 'an item free but not by the pickup time says when');
+  check(badgeOf(ID.tripod) === '⚠ Collect from 10 AM Mon 10/28', 'an item free but not by the pickup time says when');
   check(badgeOf(ID.dolly) === null, 'items you can\'t book get no badge');
   await until(() => p.root.querySelector('.range.active .extras'), 4000);
-  check(p.root.querySelector('.range.active .extras').textContent.includes('This page: 12 free · 1 with a time problem · 1 not free'), 'the selected range sums up the page');
+  check(p.root.querySelector('.range.active .extras').textContent.includes('On this page: 12 free, 1 partly free, 1 not free.'), 'the selected range sums up the page');
   p.save();
 
   p = loadPage({ booked: [ID.light300d], limits: shootLimits });
@@ -601,10 +601,10 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
     'old check dates become a date range, and stay selected');
   await until(() => p.root.querySelectorAll('li.slot .badge').length === 2 && !p.root.querySelector('li.slot .badge.pending'), 8000);
   const slotBadges = [...p.root.querySelectorAll('li.slot .badge')].map((b) => b.textContent).join();
-  check(slotBadges === 'Not available,Available', 'the preset shows each unit\'s availability for the selected dates: ' + slotBadges);
-  p.button('or just add to basket').click();
+  check(slotBadges === 'Not free,Free', 'the preset shows each unit\'s availability for the selected dates: ' + slotBadges);
+  p.button('Add to basket only').click();
   await until(() => p.postbacks.length, 6000);
-  check(/ctl11_bookBtn$/.test(p.postbacks[0] || ''), '"or just add to basket" picks Kit #3 for those dates');
+  check(/ctl11_bookBtn$/.test(p.postbacks[0] || ''), '"Add to basket only" picks Kit #3 for those dates');
 
   console.log('Collapsible sections and a quieter preset');
   resetStorage();
@@ -615,26 +615,26 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   p = loadPage();
   check(!p.root.querySelector('li.slot .tools') && !p.root.querySelector('li.slot .x') && !p.button('Rename'), 'outside Edit, the preset shows just the items: no +alt, ×, Rename or Delete');
   p.button('Edit').click();
-  check(p.root.querySelectorAll('li.slot .tools').length === 2 && !!p.button('Rename') && !!p.button('Delete preset') && p.w.document.querySelectorAll('.c2p-toggle').length === 15,
+  check(p.root.querySelectorAll('li.slot .tools').length === 2 && !!p.button('Rename') && !!p.button('Delete list') && p.w.document.querySelectorAll('.c2p-toggle').length === 15,
     'Edit shows the controls and the "+ Preset" buttons on the list');
   p.button('Done').click();
   check(p.w.document.querySelectorAll('.c2p-toggle').length === 0, 'Done hides them again');
-  check(!p.card('Dates').querySelector('.card-m') && !p.card('Preset').querySelector('.card-m'), 'open sections don\'t repeat themselves in their headers');
-  p.card('Preset').click();
-  check(!p.root.querySelector('li.slot') && p.card('Preset').textContent.includes('Catio Doc · 2 items') && p.get('ui').showPresets === false,
+  check(!p.card('Dates').querySelector('.card-m') && !p.card('Gear list').querySelector('.card-m'), 'open sections don\'t repeat themselves in their headers');
+  p.card('Gear list').click();
+  check(!p.root.querySelector('li.slot') && p.card('Gear list').textContent.includes('Catio Doc, 2 items') && p.get('ui').showPresets === false,
     'the Preset section collapses to one line with the preset\'s name');
   p.save();
   p = loadPage();
-  check(!p.root.querySelector('li.slot') && p.card('Preset').getAttribute('aria-expanded') === 'false', 'and stays collapsed on the next page');
-  p.card('Preset').click();
+  check(!p.root.querySelector('li.slot') && p.card('Gear list').getAttribute('aria-expanded') === 'false', 'and stays collapsed on the next page');
+  p.card('Gear list').click();
   p.card('Dates').click();
-  check(!!p.root.querySelector('li.slot') && !p.button('+ Add dates') && p.card('Dates').textContent.includes('none yet'), 'the Dates section collapses too');
-  const sel = p.root.querySelector('select[aria-label="Preset"]');
-  check([...sel.options].map((o) => o.textContent).join() === 'Catio Doc (2),Audio (0),+ New preset…', 'the preset picker lists presets and "+ New preset…"');
+  check(!!p.root.querySelector('li.slot') && !p.button('+ Add dates') && p.card('Dates').textContent.includes('None yet'), 'the Dates section collapses too');
+  const sel = p.root.querySelector('select[aria-label="Gear list"]');
+  check([...sel.options].map((o) => o.textContent).join() === 'Catio Doc (2),Audio (0),New gear list…', 'the preset picker lists presets and "+ New preset…"');
   p.w.prompt = () => 'Interview audio';
   sel.value = sel.options[2].value;
   sel.dispatchEvent(new p.w.Event('change'));
-  check(p.get('ui').current === 'Interview audio' && p.get('ui').editing === true, '"+ New preset…" makes a preset and opens it for editing');
+  check(p.get('ui').current === 'Interview audio' && p.get('ui').editing === true, '"New gear list…" makes a preset and opens it for editing');
 
   console.log('Preset button layout');
   resetStorage();
@@ -662,13 +662,13 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   await until(() => p.w.document.querySelector('.c2p-avail') && !p.w.document.querySelector('.c2p-avail-pending') && !p.root.querySelector('.badge.pending'), 8000);
   check(p.fetches.length === 14, 'first visit: checks the preset and the page once each (14 items; the preset\'s kits are on this page)');
   await until(() => p.root.textContent.includes('Checked just now'), 4000);
-  check(p.root.textContent.includes('Checked just now · Refresh'), 'says how old the results are, with Refresh');
+  check(p.root.textContent.includes('Checked just now. Refresh'), 'says how old the results are, with Refresh');
   p.save();
   check(Object.keys(JSON.parse(storage['c2presets.avail'])).length === 14, 'results are saved in the browser');
 
   p = loadPage({ booked: [ID.arri1] });
   await wait(300);
-  check(p.fetches.length === 0 && badgeOf(ID.fog) === '✓ Free for your dates' && p.root.querySelector('li.slot .badge').textContent === 'Not available',
+  check(p.fetches.length === 0 && badgeOf(ID.fog) === '✓ Free for your dates' && p.root.querySelector('li.slot .badge').textContent === 'Not free',
     'next page or reload: badges come from saved results, with no requests');
   rangeEl(0).querySelector('button.link').click(); // Edit
   const t2 = rangeEl(0).querySelectorAll('input[type=time]')[1];
@@ -686,7 +686,7 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   p = loadPage({ booked: [ID.arri1] });
   await wait(300);
   check(p.fetches.length === 0 && p.root.textContent.includes('Checked 12 min ago'), 'results under 30 minutes old are still used, and their age shown');
-  p.button('or just add to basket').click();
+  p.button('Add to basket only').click();
   await until(() => p.postbacks.length, 6000);
   check(p.fetches.length === 2 && /ctl11_bookBtn$/.test(p.postbacks[0] || ''), 'adding re-checks the preset\'s units when results are over 5 minutes old');
   p.w.localStorage.removeItem('c2presets.queue');
@@ -724,10 +724,10 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   p = loadPage({ edit: withBasket(1) }); await wait();
   p.save();
   p = loadPage({ edit: withBasket(1) });
-  p.card('More').click();
+  p.card('Share and help').click();
   p.button('Copy problem report').click();
   const reportText = (p.prompted[p.prompted.length - 1] || [])[1] || '';
-  check(reportText.startsWith('Connect2 Gear Presets problem report') && reportText.includes('Page: /wizard/multiresource.aspx (list) · Step 1 of 6'),
+  check(reportText.startsWith('Better Checkout problem report') && reportText.includes('Page: /wizard/multiresource.aspx (list) · Step 1 of 6'),
     'the report says which page you were on');
   check(reportText.includes('list items 15, add buttons 14 on / 1 off') && reportText.includes('basket 1') && reportText.includes('next page yes'),
     'what the script found on it');
@@ -740,7 +740,7 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   resetStorage();
   p = loadPage({ booked: [ID.light300d], limits: shootLimits });
   const bar = () => p.w.document.querySelector('.c2p-filterbar');
-  check(!!bar() && bar().textContent.includes('Want to see only the gear') && !!bar().querySelector('.c2p-pickdates'), 'without dates, a bar above the list offers to pick them');
+  check(!!bar() && bar().textContent.includes('See only the gear that\'s free when you need it') && !!bar().querySelector('.c2p-pickdates'), 'without dates, a bar above the list offers to pick them');
   check(bar().nextElementSibling === p.w.document.querySelector('ul.resource-list'), 'it sits right above Connect2\'s list');
   bar().querySelector('.c2p-pickdates').click();
   check(p.get('schedule').ranges.length === 1 && p.get('ui').editRange === 0 && !!p.root.querySelector('.range input[type=date]'), '"Pick your dates" adds dates in the panel, open for editing');
@@ -781,19 +781,19 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   ] } });
   storage['c2presets.ui'] = JSON.stringify({ current: 'Catio Doc', open: true });
   p = loadPage();
-  p.card('More').click();
-  p.button('Copy link to share "Catio Doc"').click();
+  p.card('Share and help').click();
+  p.button('Share "Catio Doc"').click();
   const link = (p.prompted[p.prompted.length - 1] || [])[1] || '';
   check(link.startsWith('https://mtsu.getconnect2.com/wizard/multiresource.aspx#c2p=') && link.length < 700, 'the link points at the equipment list (' + link.length + ' characters)');
-  check(p.status().includes('Anyone with this script installed who opens it while signed in'), 'and says who it works for');
+  check(p.status().includes('Anyone with Better Checkout who opens it while signed in'), 'and says who it works for');
 
   resetStorage(); // a classmate
   p = loadPage({ url: link });
-  check((p.confirms[0] || '').includes('Add the preset "Catio Doc" (3 items) that was shared with you?'), 'opening it asks before adding anything');
+  check((p.confirms[0] || '').includes('add the gear list "Catio Doc" (3 items) that was shared with you?'), 'opening it asks before adding anything');
   const got = p.get('presets')['Catio Doc'];
   check(got && slotIds(got) === ID.arri1 + '|' + ID.arri3 + ',' + ID.tripod + ',' + ID.fog, 'the preset arrives with its items and backups');
   check(got.slots[2].options[0].note.includes('prior permission'), 'item notes are filled in from the equipment list');
-  check(p.w.location.hash === '' && p.get('ui').current === 'Catio Doc' && p.status().includes('Added the preset "Catio Doc" (3 items).'),
+  check(p.w.location.hash === '' && p.get('ui').current === 'Catio Doc' && p.status().includes('Added the gear list "Catio Doc" (3 items).'),
     'it\'s selected, and the link part is cleared so a reload doesn\'t add it again');
   p.save();
   p = loadPage({ url: link, confirmAnswers: [true, false] });

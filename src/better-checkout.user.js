@@ -1,50 +1,128 @@
 // ==UserScript==
-// @name         Connect2 Gear Presets (MTSU)
-// @namespace    nathan.c2presets
-// @version      0.11.0
-// @description  Gear presets for MTSU's Connect2 checkout: add a whole preset to your basket in one click, check its availability, and book it for several date ranges.
+// @name         Better Checkout
+// @namespace    better-checkout.mtsu
+// @version      1.0.0
+// @description  A friendlier way to book gear on MTSU's Connect2 equipment checkout: see what's free for your dates, save the gear you use as lists, and book several dates in a row.
+// @author       Nathan Montalvo
+// @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHJlY3QgeD0iMiIgeT0iMy4yIiB3aWR0aD0iMjAiIGhlaWdodD0iNS4zIiByeD0iMS40IiBmaWxsPSIjMTcxODFkIi8+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTYuMiAzLjJoMi45TDYuNiA4LjVIMy43ek0xMi4yIDMuMmgyLjlsLTIuNSA1LjNIOS43ek0xOC4yIDMuMmgyLjlsLTIuNSA1LjNoLTIuOXoiLz48cmVjdCB4PSIyIiB5PSIxMCIgd2lkdGg9IjIwIiBoZWlnaHQ9IjExLjUiIHJ4PSIyIiBmaWxsPSIjMTcxODFkIi8+PHBhdGggZD0iTTcuNiAxNS42bDIuOSAyLjggNS45LTUuNyIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZjZjMzIiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PC9zdmc+
 // @homepageURL  https://github.com/nathanmontalvoGM/Better-Equipment-Reservation
-// @downloadURL  https://raw.githubusercontent.com/nathanmontalvoGM/Better-Equipment-Reservation/main/src/connect2-gear-presets.user.js
-// @updateURL    https://raw.githubusercontent.com/nathanmontalvoGM/Better-Equipment-Reservation/main/src/connect2-gear-presets.user.js
+// @supportURL   https://github.com/nathanmontalvoGM/Better-Equipment-Reservation/issues
+// @downloadURL  https://raw.githubusercontent.com/nathanmontalvoGM/Better-Equipment-Reservation/main/src/better-checkout.user.js
+// @updateURL    https://raw.githubusercontent.com/nathanmontalvoGM/Better-Equipment-Reservation/main/src/better-checkout.user.js
 // @match        https://mtsu.getconnect2.com/wizard/*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
 
 /*
- * How it works
- * - Presets are stored in this browser only (localStorage on mtsu.getconnect2.com).
- * - A preset is a list of slots ("an Arri 3-light kit"). Each slot can hold
- *   interchangeable units (Kit #1, Kit #3, ...), tried in order.
- * - "Add to basket" clicks Connect2's own Add buttons for you, one item per page load,
- *   searching for an item when it isn't on the current page. When you've set dates
- *   (Availability box → Go), each slot uses its first unit that's free for those dates.
- *   It never submits a booking: you still pick dates and press "Create booking" yourself.
- * - Items your account can't book can't be added to presets, and item notes such as
- *   "needs permission" are shown in the preset.
- * - Date ranges: list each pickup → return you need a preset for, and the script makes one
- *   booking per range (Connect2 allows up to 3 days). For each booking it adds the
- *   gear, fills in the times, presses Next, and stops at Terms & Conditions.
- * - Before a run, every range is checked against Connect2's "collect from" / "return by"
- *   limits (cage hours and other people's bookings), with a one-click fix when narrowing
- *   the times would work. If Connect2 still rejects a time, its reasons and suggested
- *   times are shown, and picking a suggestion continues the run.
- * - Dates: one list of pickup → return windows. The selected one shows next to every item on
- *   the equipment list whether it's free then; presets use it too; Book books them all.
- * - "Only show gear that's free": a switch above Connect2's list hides what isn't free then.
- * - Items free for only part of your dates say when they are free, with "Use these dates".
- * - Connect2's own date-only Availability box is replaced by the helper's dates (one place to set them).
- * - Share links: a link that adds a preset for anyone with the script installed.
- * - Runs notice Connect2's Complete page: they end after the last booking, or offer the next one.
- * - Copy problem report: what the script did and found, for fixing it (never your name or login).
- * - Replacements: every equipment list page you open is remembered (or scan the whole list
- *   once). When an item isn't free for a booking, similar items that are free then are
- *   offered as alternates, in Check ranges, before a run adds anything, and after a rejection. You finish
- *   Terms, Special Requests, Verify and Complete yourself, then start the next booking.
+ * Better Checkout adds a panel to Connect2's equipment checkout (bottom right) and marks up the
+ * equipment list. Everything it adds carries its slate logo, so it's never mistaken for Connect2.
+ *
+ * - Dates: when you'll pick up and return gear. The selected dates show, next to every item on the
+ *   list, whether it's free then ("Only show gear that's free" hides the rest). Connect2's own
+ *   date-only Availability box is replaced, so dates are set in one place.
+ * - Gear lists: the gear you check out every time, with backups for items that might be taken.
+ *   One click adds a list to the basket, using a unit that's free for your dates.
+ * - Booking: one booking per date. For each, it adds the gear, fills in the times and stops at
+ *   Terms & Conditions. You finish every booking yourself; it never completes one for you.
+ * - Problems are explained where they happen: items free for only part of your dates offer
+ *   "Use these dates", items that are taken offer something similar, and Connect2's rejections
+ *   show its reasons and suggested times.
+ *
+ * Data (gear lists, dates, saved availability) stays in this browser, under the Connect2 site.
+ * Internal names still say "preset" and "c2presets": they're kept so existing data carries over.
  */
 
 (function () {
   'use strict';
+
+  // ---------- look ----------
+  // Ink and white, with camera-tape yellow as the one accent. Blue stays Connect2's; green, amber
+  // and red only ever mean free, partly free and not free.
+  const C = {
+    ink: '#17181d', ink2: '#2c2e37', paper: '#ffffff', mist: '#f4f5f7', line: '#e2e4e9', line2: '#cdd1d8',
+    muted: '#5d6270', tape: '#ffcf33', tapeSoft: '#fff7d6', tapeLine: '#ecd27a', focus: '#2563eb',
+    ok: '#146c43', okBg: '#e2f4e9', part: '#8a5200', partBg: '#fff0cf', no: '#b42318', noBg: '#fde8e6', unk: '#3f4552', unkBg: '#eceef2',
+  };
+  const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+  const STRIPES = 'repeating-linear-gradient(135deg, ' + C.ink + ' 0 7px, #ffffff 7px 14px)'; // a clapperboard's sticks
+
+  // The mark: a clapperboard slate with a check. `onDark` draws it for the ink header.
+  function logo(size, onDark) {
+    const bar = onDark ? '#ffffff' : C.ink, stripes = onDark ? C.ink : '#ffffff';
+    const body = onDark ? C.tape : C.ink, check = onDark ? C.ink : C.tape;
+    return '<svg class="bc-logo" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+      '<rect x="2" y="3.2" width="20" height="5.3" rx="1.4" fill="' + bar + '"/>' +
+      '<path fill="' + stripes + '" d="M6.2 3.2h2.9L6.6 8.5H3.7zM12.2 3.2h2.9l-2.5 5.3H9.7zM18.2 3.2h2.9l-2.5 5.3h-2.9z"/>' +
+      '<rect x="2" y="10" width="20" height="11.5" rx="2" fill="' + body + '"/>' +
+      '<path d="M7.6 15.6l2.9 2.8 5.9-5.7" fill="none" stroke="' + check + '" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  }
+  function logoEl(size, onDark) {
+    const span = document.createElement('span');
+    span.className = 'bc-mark';
+    span.innerHTML = logo(size, onDark);
+    return span;
+  }
+
+  // Styles for what Better Checkout adds to Connect2's own page (the panel has its own, in a shadow root).
+  const PAGE_CSS = `
+    body.c2p-own-avail .resource-availability { display: none !important; }
+    .bc-mark { display: inline-flex; flex: none; line-height: 0; }
+    .bc-btn { font: 600 13px/1.2 ${FONT}; padding: 6px 12px; border-radius: 6px; border: 1px solid ${C.ink}; background: ${C.paper};
+      color: ${C.ink}; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+    .bc-btn:hover { background: ${C.ink}; color: #fff; }
+    .bc-btn.solid { background: ${C.ink}; color: #fff; }
+    .bc-btn.solid:hover { background: ${C.ink2}; }
+    .bc-btn.small { font-size: 12.5px; padding: 3px 10px; }
+    .bc-btn:focus-visible, .c2p-onlyfree:focus-visible, .c2p-toggle:focus-visible { outline: 2px solid ${C.focus}; outline-offset: 2px; }
+
+    .c2p-avail { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 8px; font: 13px/1.4 ${FONT}; color: ${C.ink}; }
+    .bc-pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px 2px 3px; border-radius: 999px; font-weight: 600; font-size: 12.5px; }
+    .bc-pill .bc-mark { background: #fff; border-radius: 999px; padding: 2px; }
+    .bc-pill.ok { background: ${C.okBg}; color: ${C.ok}; } .bc-pill.limited { background: ${C.partBg}; color: ${C.part}; }
+    .bc-pill.bad { background: ${C.noBg}; color: ${C.no}; } .bc-pill.unknown { background: ${C.unkBg}; color: ${C.unk}; }
+    .bc-pill.pending { background: ${C.mist}; color: ${C.muted}; }
+    .bc-detail { font-size: 12.5px; color: ${C.muted}; }
+    .c2p-freepart { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: ${C.ink}; }
+
+    .c2p-filterbar { position: relative; display: flex; align-items: center; gap: 10px 18px; flex-wrap: wrap; margin: 8px 0 14px;
+      padding: 12px 16px 12px 22px; background: ${C.paper}; border: 1px solid ${C.line}; border-radius: 10px;
+      box-shadow: 0 1px 2px rgba(23, 24, 29, .06); font: 14px/1.4 ${FONT}; color: ${C.ink}; overflow: hidden; }
+    .c2p-filterbar::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 7px; background: ${STRIPES}; }
+    .bc-brand { display: inline-flex; align-items: center; gap: 7px; font-weight: 700; font-size: 13px; letter-spacing: -.01em;
+      padding-right: 16px; border-right: 1px solid ${C.line}; white-space: nowrap; }
+    .c2p-onlyfree { display: inline-flex; align-items: center; gap: 11px; border: 0; background: none; padding: 2px; margin: 0;
+      cursor: pointer; font: inherit; color: inherit; text-align: left; }
+    .bc-track { position: relative; flex: none; width: 46px; height: 26px; border-radius: 13px; background: #c3c7cf; transition: background .15s; }
+    .bc-track.on { background: ${C.ink}; }
+    .bc-knob { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, .35); transition: left .15s; }
+    .bc-track.on .bc-knob { left: 23px; background: ${C.tape}; }
+    .bc-sw-words { display: flex; flex-direction: column; }
+    .bc-sw-title { font-weight: 700; }
+    .bc-sw-sub { font-size: 12.5px; color: ${C.muted}; }
+    .bc-bar-note { font-size: 13px; color: ${C.muted}; }
+
+    .c2p-availnote { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+    .bc-side { display: flex; flex-direction: column; gap: 6px; font: 13px/1.4 ${FONT}; color: ${C.ink}; }
+    .bc-side-brand { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 12.5px; }
+    .bc-side-dates { font-weight: 600; }
+
+    .c2p-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 6px; font: 600 13px/1.4 ${FONT};
+      padding: 5px 10px; border-radius: 4px; border: 1px solid ${C.ink}; background: ${C.paper}; color: ${C.ink}; cursor: pointer; }
+    .c2p-toggle:hover { background: ${C.mist}; }
+    .c2p-toggle.saved { background: ${C.tapeSoft}; border-color: ${C.tapeLine}; }
+    .c2p-toggle:disabled { background: ${C.mist}; border-color: ${C.line2}; color: ${C.muted}; cursor: not-allowed; }
+    .c2p-toggle:disabled .bc-mark { opacity: .45; }
+    @media (prefers-reduced-motion: reduce) { .bc-track, .bc-knob { transition: none; } }
+  `;
+  function ensurePageStyles() {
+    if (document.getElementById('bc-page-style')) return;
+    const st = document.createElement('style');
+    st.id = 'bc-page-style';
+    st.textContent = PAGE_CSS;
+    (document.head || document.documentElement).appendChild(st);
+  }
 
   // ---------- storage ----------
   const NS = 'c2presets.';
@@ -305,10 +383,10 @@
     if (!b || !b.startTime) return { kind: 'ok', why: '' };
     const problems = [];
     if (r.collect && minutesAt(b.startDate, b.startTime) < minutesAt(r.collect.date || b.startDate, r.collect.time)) {
-      problems.push('collect from ' + time12(r.collect.time) + ' ' + shortDay(r.collect.date || b.startDate));
+      problems.push('collect from ' + time12s(r.collect.time) + ' ' + shortDay(r.collect.date || b.startDate));
     }
     if (r.ret && minutesAt(b.endDate, b.endTime) > minutesAt(r.ret.date || b.endDate, r.ret.time)) {
-      problems.push('return by ' + time12(r.ret.time) + ' ' + shortDay(r.ret.date || b.endDate));
+      problems.push('return by ' + time12s(r.ret.time) + ' ' + shortDay(r.ret.date || b.endDate));
     }
     return problems.length ? { kind: 'hours', why: problems.join(', ') } : { kind: 'ok', why: '' };
   }
@@ -555,7 +633,7 @@
     for (const [si, slot] of p.slots.entries()) {
       const units = slot.options.map((o) => { const r = availFor(d, o.id); return { o, r, f: fitFor(r, b) }; });
       if (units.some((u) => u.f.kind === 'ok') || units.every((u) => !u.r)) continue;
-      issues.push(slot.options[0].name + ': ' + units[0].f.why + (units.length > 1 ? ' (alternates too)' : ''));
+      issues.push(slot.options[0].name + ': ' + units[0].f.why + (units.length > 1 ? ' (backups too)' : ''));
       problemSlots.push({ si, text: issues[issues.length - 1] });
       // When units are free for part of the time, narrow the booking to the unit with the most room.
       let best = null;
@@ -602,15 +680,11 @@
     return { text: '✗ Not free for your dates', kind: 'bad', detail: r.detail };
   }
 
-  const BADGE_STYLE = {
-    ok: 'background:#dcfce7;color:#166534;', limited: 'background:#fef3c7;color:#92400e;', bad: 'background:#fee2e2;color:#991b1b;',
-    unknown: 'background:#e5e7eb;color:#374151;', pending: 'background:#f3f4f6;color:#6b7280;',
-  };
-
   // Badges are left off while the script is adding, booking or scanning: those reload the page constantly.
   const busyElsewhere = () => !!(getRun() || store.get('queue', null) || store.get('scan', null));
 
   function decorateBadges() {
+    ensurePageStyles();
     qsa('.c2p-avail').forEach((b) => b.remove());
     const ab = activeBooking();
     if (ab && isSelectPage() && !busyElsewhere()) {
@@ -619,16 +693,15 @@
         if (!bd) continue;
         const box = document.createElement('div');
         box.className = 'c2p-avail c2p-avail-' + bd.kind;
-        box.style.cssText = 'margin-top:8px;font-size:13px;line-height:1.4;';
         const pill = document.createElement('span');
-        pill.textContent = bd.text;
-        pill.title = 'For ' + bookingLabel(ab) + (bd.detail ? ': ' + bd.detail : '');
-        pill.style.cssText = 'display:inline-block;padding:2px 8px;border-radius:10px;font-weight:600;' + BADGE_STYLE[bd.kind];
+        pill.className = 'bc-pill ' + bd.kind;
+        pill.title = 'Better Checkout · for ' + bookingLabel(ab) + (bd.detail ? ': ' + bd.detail : '');
+        pill.append(logoEl(14), document.createTextNode(bd.text));
         box.appendChild(pill);
         if (bd.detail && bd.kind !== 'pending') {
           const det = document.createElement('div');
+          det.className = 'bc-detail';
           det.textContent = bd.detail;
-          det.style.cssText = 'margin-top:2px;font-size:12px;color:#555;';
           box.appendChild(det);
         }
         if (bd.part) box.appendChild(freePartLine(bd.part));
@@ -642,14 +715,13 @@
   function freePartLine(part) {
     const row = document.createElement('div');
     row.className = 'c2p-freepart';
-    row.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px;font-size:13px;color:#374151;';
     const t = document.createElement('span');
     t.textContent = 'Free ' + shortLabel(part);
     const b = document.createElement('button');
     b.type = 'button';
+    b.className = 'bc-btn small';
     b.textContent = 'Use these dates';
     b.title = 'Change your selected dates to ' + bookingLabel(part);
-    b.style.cssText = 'font:inherit;font-size:12px;padding:2px 10px;border-radius:6px;border:1px solid #2563eb;background:#fff;color:#2563eb;cursor:pointer;';
     b.addEventListener('click', (e) => { e.preventDefault(); useDates(part); });
     row.append(t, b);
     return row;
@@ -699,18 +771,13 @@
     ui.activeRange = schedule.ranges.length - 1;
     saveSchedule(); saveUi();
     log('dates', 'carried over Connect2 Availability dates ' + pd.label);
-    statusText = 'Using the dates from Connect2\'s Availability box: ' + shortLabel(r) + '. You can change them in the Dates section.';
+    statusText = 'Better Checkout is using the dates from Connect2\'s Availability box: ' + shortLabel(r) + '. You can change them under Dates.';
     store.set('lastStatus', statusText);
   }
 
   function takeOverAvailabilityBox() {
-    if (!qs('#c2p-own-avail-style')) {
-      const st = document.createElement('style');
-      st.id = 'c2p-own-avail-style';
-      st.textContent = 'body.c2p-own-avail .resource-availability{display:none!important}';
-      document.head.appendChild(st);
-    }
-    document.body.classList.add('c2p-own-avail'); // Connect2's own per-item markers would contradict the helper's
+    ensurePageStyles();
+    document.body.classList.add('c2p-own-avail'); // Connect2's own per-item markers would contradict Better Checkout's
     const box = qs('[id$="availabilitySearch_availabilitySetup"]');
     if (!box) return;
     box.style.display = 'none';
@@ -721,20 +788,31 @@
       box.parentNode.insertBefore(note, box.nextSibling);
     }
     note.textContent = '';
-    note.style.cssText = 'display:flex;flex-direction:column;gap:6px;align-items:flex-start;';
     const label = document.createElement('label');
     label.textContent = 'Availability';
+    const side = document.createElement('div');
+    side.className = 'bc-side';
+    const brand = document.createElement('span');
+    brand.className = 'bc-side-brand';
+    brand.append(logoEl(16), document.createTextNode('Better Checkout'));
     const ab = activeBooking();
     const txt = document.createElement('div');
-    txt.style.cssText = 'font-size:14px;';
-    txt.textContent = ab ? 'Showing what\'s free ' + shortLabel(ab) + '.' : 'Pick your dates to see what\'s free.';
+    if (ab) {
+      txt.append(document.createTextNode('Showing what\'s free '));
+      const strong = document.createElement('span');
+      strong.className = 'bc-side-dates';
+      strong.textContent = shortLabel(ab);
+      txt.append(strong);
+    } else {
+      txt.textContent = 'Pick your dates to see what\'s free.';
+    }
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'c2p-changedates';
+    btn.className = 'c2p-changedates bc-btn small';
     btn.textContent = ab ? 'Change dates' : 'Pick your dates';
-    btn.style.cssText = 'font:inherit;font-size:13px;padding:4px 12px;border-radius:6px;border:1px solid #2563eb;background:#fff;color:#2563eb;cursor:pointer;';
     btn.addEventListener('click', (e) => { e.preventDefault(); pickDatesFromBar(); });
-    note.append(label, txt, btn);
+    side.append(brand, txt, btn);
+    note.append(label, side);
   }
 
   // ---------- "Only show gear that's free" switch above Connect2's list ----------
@@ -764,17 +842,19 @@
 
     const bar = document.createElement('div');
     bar.className = 'c2p-filterbar';
-    bar.style.cssText = 'display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap;margin:8px 0 14px;padding:12px 16px;border:2px solid #93c5fd;' +
-      'border-radius:10px;background:#eff6ff;color:#1d1d1f;font:15px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;';
-    const text = (t, css) => { const sp = document.createElement('span'); sp.textContent = t; sp.style.cssText = css || ''; return sp; };
+    bar.setAttribute('role', 'region');
+    bar.setAttribute('aria-label', 'Better Checkout');
+    const span = (cls, t) => { const sp = document.createElement('span'); sp.className = cls; if (t) sp.textContent = t; return sp; };
+    const brand = span('bc-brand');
+    brand.append(logoEl(18), document.createTextNode('Better Checkout'));
+    bar.appendChild(brand);
 
     if (!ab) {
-      bar.appendChild(text('Want to see only the gear that\'s free when you need it?', 'font-weight:600;'));
+      bar.appendChild(span('bc-sw-title', 'See only the gear that\'s free when you need it.'));
       const pick = document.createElement('button');
       pick.type = 'button';
-      pick.className = 'c2p-pickdates';
+      pick.className = 'c2p-pickdates bc-btn solid';
       pick.textContent = 'Pick your dates';
-      pick.style.cssText = 'font:inherit;font-weight:600;padding:6px 14px;border-radius:8px;border:0;background:#2563eb;color:#fff;cursor:pointer;';
       pick.addEventListener('click', (e) => { e.preventDefault(); pickDatesFromBar(); });
       bar.appendChild(pick);
       list.parentNode.insertBefore(bar, list);
@@ -787,14 +867,11 @@
     sw.className = 'c2p-onlyfree';
     sw.setAttribute('role', 'switch');
     sw.setAttribute('aria-checked', String(on));
-    sw.style.cssText = 'display:inline-flex;align-items:center;gap:10px;border:0;background:none;padding:0;cursor:pointer;font:inherit;color:inherit;text-align:left;';
-    const track = text('', 'position:relative;flex:none;width:50px;height:28px;border-radius:14px;transition:background .15s;background:' + (on ? '#2563eb' : '#9ca3af') + ';');
-    track.appendChild(text('', 'position:absolute;top:3px;left:' + (on ? '25px' : '3px') + ';width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .15s;'));
-    sw.appendChild(track);
-    const words = text('', 'display:flex;flex-direction:column;');
-    words.appendChild(text('Only show gear that\'s free ' + (on ? '(on)' : '(off)'), 'font-weight:700;'));
-    words.appendChild(text(shortLabel(ab), 'font-size:13px;color:#374151;'));
-    sw.appendChild(words);
+    const track = span('bc-track' + (on ? ' on' : ''));
+    track.appendChild(span('bc-knob'));
+    const words = span('bc-sw-words');
+    words.append(span('bc-sw-title', 'Only show gear that\'s free ' + (on ? '(on)' : '(off)')), span('bc-sw-sub', shortLabel(ab)));
+    sw.append(track, words);
     sw.addEventListener('click', (e) => { e.preventDefault(); setOnlyFree(!on); });
     bar.appendChild(sw);
 
@@ -815,7 +892,7 @@
       : pending ? 'Still checking ' + pending + ' item' + (pending > 1 ? 's' : '') + '…'
       : !shown ? 'Nothing on this page is free then. Try the next page.'
       : 'Hiding ' + hidden + ' item' + (hidden === 1 ? '' : 's') + ' on this page that ' + (hidden === 1 ? 'isn\'t' : 'aren\'t') + ' free then.';
-    bar.appendChild(text(note, 'font-size:13px;color:#374151;'));
+    bar.appendChild(span('bc-bar-note', note));
     list.parentNode.insertBefore(bar, list);
   }
 
@@ -872,11 +949,11 @@
     for (const it of pageItems()) { const bd = itemBadge(it); if (bd) counts[bd.kind] += 1; }
     const parts = [];
     if (counts.ok) parts.push(counts.ok + ' free');
-    if (counts.limited) parts.push(counts.limited + (counts.limited > 1 ? ' with time problems' : ' with a time problem'));
+    if (counts.limited) parts.push(counts.limited + ' partly free');
     if (counts.bad) parts.push(counts.bad + ' not free');
     if (counts.unknown) parts.push(counts.unknown + ' couldn\'t check');
     if (counts.pending) parts.push('checking ' + counts.pending + '…');
-    return parts.length ? 'This page: ' + parts.join(' · ') : '';
+    return parts.length ? 'On this page: ' + parts.join(', ') + '.' : '';
   }
 
   // ---------- equipment catalog, for suggesting replacements ----------
@@ -978,15 +1055,15 @@
     const st = replacements[key];
     if (!catalogSize()) {
       return el('div', { class: 'repl' },
-        el('div', { class: 'muted' }, 'To suggest replacements, the script needs to know what else the cage has.'),
+        el('div', { class: 'muted' }, 'To suggest similar gear, Better Checkout needs to know what else the cage has.'),
         isSelectPage() ? el('button', { onclick: startScan }, 'Scan equipment list') : el('div', { class: 'muted' }, 'Open the equipment list once, or scan it from there.'));
     }
-    if (!st) return el('div', { class: 'repl' }, el('button', { onclick: () => searchReplacements(key, orig, b, p) }, 'Find a replacement'));
-    if (st.loading) return el('div', { class: 'repl muted' }, 'Looking for similar items that are free then…');
+    if (!st) return el('div', { class: 'repl' }, el('button', { onclick: () => searchReplacements(key, orig, b, p) }, 'Find something similar'));
+    if (st.loading) return el('div', { class: 'repl muted' }, 'Looking for similar gear that\'s free then…');
     if (!st.found.length) {
       return el('div', { class: 'repl muted' }, st.looked
         ? 'None of the ' + st.looked + ' most similar items are free then.'
-        : 'No similar items found in the ' + catalogSize() + ' items the script knows about' + (listTotal() > catalogSize() ? ' (scan the full list to search more)' : '') + '.');
+        : 'Nothing similar among the ' + catalogSize() + ' items Better Checkout knows' + (listTotal() > catalogSize() ? '. Scan the equipment list to search all of it' : '') + '.');
     }
     return el('div', { class: 'repl' },
       el('div', { class: 'muted' }, 'Free then:'),
@@ -1030,7 +1107,7 @@
     store.del('scan');
     const total = listTotal();
     log('scan', 'done: ' + catalogSize() + ' items known, list says ' + (total || '?'));
-    setStatus('Scan done: the script now knows ' + catalogSize() + ' items' + (total ? ' (this list has ' + total + ')' : '') + ', so it can suggest replacements.');
+    setStatus('Scan done: Better Checkout now knows ' + catalogSize() + ' items' + (total ? ' (this list has ' + total + ')' : '') + ', so it can suggest similar gear.');
   }
 
   function stopScan() { store.del('scan'); setStatus('Scan stopped. ' + catalogSize() + ' items saved.'); }
@@ -1051,18 +1128,18 @@
   async function startRun() {
     const p = presets[ui.current];
     const bookings = computeBookings(schedule.ranges);
-    if (!p || !p.slots.length) return setStatus('Pick a preset with items first.');
+    if (!p || !p.slots.length) return setStatus('Pick a gear list with items first.');
     if (!bookings.length) return setStatus('Add dates first.');
     if (bookings.some((b) => b.invalid)) return setStatus('Fix the dates marked "return is not after pickup" first.');
     if (!isSelectPage()) return setStatus('Open Book by Category → ' + (p.category || 'your equipment category') + ' first.');
     if (p.category && category() && p.category !== category()) {
-      if (!confirm('This preset was made in "' + p.category + '", but you are in "' + category() + '". Continue anyway?')) return;
+      if (!confirm('This gear list was made in "' + p.category + '", but this page is "' + category() + '". Continue anyway?')) return;
     }
     if (starting) return;
     starting = true;
     let reports;
     try {
-      setStatus('Checking "' + ui.current + '" for ' + (bookings.length > 1 ? bookings.length + ' date ranges…' : 'those dates…'));
+      setStatus('Checking "' + ui.current + '" for ' + (bookings.length > 1 ? 'all ' + bookings.length + ' dates…' : 'those dates…'));
       reports = await preflight(p, bookings);
     } finally {
       starting = false;
@@ -1074,9 +1151,9 @@
       const notes = b.warnings.concat(r && !r.ok ? r.issues : []);
       return (i + 1) + '. ' + bookingLabel(b) + (notes.length ? '\n     ⚠ ' + notes.join('\n     ⚠ ') : '');
     });
-    if (!confirm('Make ' + bookings.length + ' booking(s) of "' + ui.current + '"?\n\n' + lines.join('\n') +
-      (problems.length ? '\n\nSome bookings have problems, and Connect2 will probably reject them as entered. Cancel to fix them first: select a date range in the panel to see its problems.' : '') +
-      '\n\nFor each booking the script adds the gear, fills in the times and stops at Terms & Conditions. You finish each booking yourself.')) return;
+    if (!confirm('Better Checkout: book "' + ui.current + '" for ' + (bookings.length > 1 ? bookings.length + ' dates' : 'these dates') + '?\n\n' + lines.join('\n') +
+      (problems.length ? '\n\nSome bookings have problems, and Connect2 will probably reject them as entered. Cancel to fix them first: select those dates in the panel to see what\'s wrong.' : '') +
+      '\n\nFor each booking, Better Checkout adds the gear, fills in the times and stops at Terms & Conditions. You finish each booking yourself.')) return;
     saveRun({
       preset: ui.current,
       bookings: bookings.map(({ startDate, startTime, endDate, endTime, days }) => ({ startDate, startTime, endDate, endTime, days })),
@@ -1275,10 +1352,10 @@
   // opts.dates overrides the page's Availability dates; opts.booking adds times to fit; opts.run marks a booking run.
   async function startQueue(name, opts = {}) {
     const p = presets[name];
-    if (!p || !p.slots.length) return setStatus('That preset is empty.');
+    if (!p || !p.slots.length) return setStatus('That gear list is empty.');
     if (!isSelectPage()) return setStatus('Open a "Book by Category" equipment list first.');
     if (!opts.run && p.category && category() && p.category !== category()) {
-      if (!confirm('This preset was made in "' + p.category + '", but you are in "' + category() + '". Continue anyway?')) return;
+      if (!confirm('This gear list was made in "' + p.category + '", but this page is "' + category() + '". Continue anyway?')) return;
     }
     if (starting) return;
     starting = true;
@@ -1288,10 +1365,10 @@
       const booking = opts.booking || (act && act.booking) || null;
       let note = '';
       if (d) {
-        setStatus('Finding free units for ' + (act ? act.label : d.label) + '…');
+        setStatus('Checking what\'s free ' + (act ? act.label : d.label) + '…');
         await checkSlots(p, d, booking, BOOKING_MINUTES);
       } else if (p.slots.some((s) => s.options.length > 1)) {
-        note = 'No dates were set, so first choices were used. To let alternates replace booked units, set Check dates in the panel before adding.';
+        note = 'No dates were picked, so first choices were used. Pick your dates first to let backups stand in for taken gear.';
       }
       let items = p.slots.map((s) => {
         const options = orderOptions(s.options, d, booking);
@@ -1463,7 +1540,7 @@
   function copyShareLink() {
     if (!presets[ui.current]) return;
     log('share', 'copied link for "' + ui.current + '"');
-    copyText(shareLink(ui.current), 'Link copied. Anyone with this script installed who opens it while signed in to Connect2 gets "' + ui.current + '".');
+    copyText(shareLink(ui.current), 'Link copied. Anyone with Better Checkout who opens it while signed in to Connect2 gets "' + ui.current + '".');
   }
 
   // Opened a share link: offer to add the preset in it.
@@ -1483,9 +1560,9 @@
       return setStatus('That share link is broken or incomplete. Ask for a new one.');
     }
     const count = preset.slots.length + (preset.slots.length === 1 ? ' item' : ' items');
-    if (!confirm('Add the preset "' + data.n + '" (' + count + ') that was shared with you?')) return log('share', 'declined "' + data.n + '"');
+    if (!confirm('Better Checkout: add the gear list "' + data.n + '" (' + count + ') that was shared with you?')) return log('share', 'declined "' + data.n + '"');
     let name = String(data.n);
-    if (presets[name] && !confirm('You already have a preset called "' + name + '". Replace it?')) {
+    if (presets[name] && !confirm('You already have a gear list called "' + name + '". Replace it?')) {
       let k = 2;
       while (presets[name + ' (shared' + (k > 2 ? ' ' + k : '') + ')']) k += 1;
       name = name + ' (shared' + (k > 2 ? ' ' + k : '') + ')';
@@ -1494,7 +1571,7 @@
     Object.assign(ui, { current: name, open: true, showPresets: true, editing: false, altFor: null });
     savePresets(); saveUi();
     log('share', 'added "' + name + '" (' + count + ')');
-    setStatus('Added the preset "' + name + '" (' + count + ').');
+    setStatus('Added the gear list "' + name + '" (' + count + ').');
   }
 
   function problemReport() {
@@ -1507,8 +1584,8 @@
     const ab = activeBooking();
     const when = (t) => { const d = new Date(t); return pad(d.getMonth() + 1) + '/' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()); };
     const lines = [
-      'Connect2 Gear Presets problem report',
-      'Script ' + VERSION + ' · ' + browser + ' · ' + new Date().toISOString(),
+      'Better Checkout problem report',
+      'Better Checkout ' + VERSION + ' · ' + browser + ' · ' + new Date().toISOString(),
       'Page: ' + location.pathname + ' (' + pageKind() + ')' + (stepText() ? ' · ' + stepText() : '') + (pageTitle() ? ' · "' + pageTitle() + '"' : ''),
       'Found: ' + [
         'list items ' + qsa('li.resource-list-item').length,
@@ -1523,7 +1600,7 @@
         'clash box ' + yes(qs('[id$="MainWizardContent_suggestionsDv"]')),
       ].join(', '),
       'State: ' + [
-        Object.keys(presets).length + ' preset(s)' + (p ? ', selected has ' + p.slots.length + ' item(s)' : ''),
+        Object.keys(presets).length + ' gear list(s)' + (p ? ', selected has ' + p.slots.length + ' item(s)' : ''),
         schedule.ranges.length + ' date window(s)' + (ab ? ', selected ' + bookingLabel(ab) : ''),
         run ? 'run on booking ' + (run.b + 1) + '/' + run.bookings.length + ', stage ' + run.stage + (run.problem ? ' (' + run.problem.slice(0, 160) + ')' : '') : 'no run',
         q ? 'adding item ' + (q.i + 1) + '/' + q.items.length + ', phase ' + q.phase : 'not adding',
@@ -1540,18 +1617,18 @@
   }
 
   function copyProblemReport() {
-    copyText(problemReport(), 'Problem report copied. Paste it into a message to whoever gave you this script. It doesn\'t include your name or login.');
+    copyText(problemReport(), 'Problem report copied. Paste it into a message to whoever gave you Better Checkout. It doesn\'t include your name or login.');
   }
 
   // ---------- preset management ----------
   function newPreset() {
-    const name = (prompt('Name this preset (e.g. "A-cam package", "Interview audio"):') || '').trim();
+    const name = (prompt('Name your gear list (for example "A-cam package" or "Interview audio"):') || '').trim();
     if (!name) return;
     if (presets[name] && !confirm('"' + name + '" already exists. Replace it?')) return;
     presets[name] = { category: category(), slots: [] };
     ui.current = name; ui.editing = true; ui.altFor = null; ui.showPresets = true;
     savePresets(); saveUi();
-    setStatus('Click "+ Preset" on each item you want in "' + name + '". Use search or the category list to find them.');
+    setStatus('Now click "+ Save to list" on each item you want in "' + name + '". Use Connect2\'s search or categories to find them.');
   }
 
   function renamePreset() {
@@ -1559,13 +1636,13 @@
     if (!old) return;
     const name = (prompt('Rename "' + old + '" to:', old) || '').trim();
     if (!name || name === old) return;
-    if (presets[name]) return alert('A preset with that name already exists.');
+    if (presets[name]) return alert('You already have a gear list with that name.');
     presets[name] = presets[old]; delete presets[old];
     ui.current = name; savePresets(); saveUi(); render();
   }
 
   function deletePreset() {
-    if (!ui.current || !confirm('Delete preset "' + ui.current + '"?')) return;
+    if (!ui.current || !confirm('Delete the gear list "' + ui.current + '"? This can\'t be undone.')) return;
     delete presets[ui.current];
     ui.current = Object.keys(presets)[0] || ''; ui.editing = false; ui.altFor = null;
     savePresets(); saveUi(); render();
@@ -1612,11 +1689,11 @@
   }
 
   function exportPresets() {
-    copyText(JSON.stringify(presets, null, 2), 'Copied all your presets as text. Someone else can add them with Import.');
+    copyText(JSON.stringify(presets, null, 2), 'Copied all your gear lists as text. Someone else can add them with Import lists.');
   }
 
   function importPresets() {
-    const txt = prompt('Paste preset text from Export:');
+    const txt = prompt('Paste the text from Export lists:');
     if (!txt) return;
     try {
       const data = normalizeAll(JSON.parse(txt));
@@ -1629,9 +1706,9 @@
       }
       if (!ui.current) ui.current = Object.keys(presets)[0] || '';
       savePresets(); saveUi();
-      setStatus('Imported ' + n + ' preset(s).');
+      setStatus('Imported ' + n + (n === 1 ? ' gear list.' : ' gear lists.'));
     } catch (e) {
-      alert('That text isn\'t valid preset data.');
+      alert('That text isn\'t from Export lists. Copy it again and try once more.');
     }
   }
 
@@ -1644,82 +1721,108 @@
 
   const CSS = `
     :host { all: initial; }
-    .panel { position: fixed; right: 16px; bottom: 16px; width: 360px; max-height: 80vh; display: flex; flex-direction: column;
-      background: #f3f4f6; color: #1d1d1f; border: 1px solid #c9ccd1; border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.18);
-      font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; z-index: 2147483000; overflow: hidden; }
-    .panel.closed { width: auto; }
-    header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #1f2a44; color: #fff; cursor: pointer; user-select: none; }
-    header b { flex: 1; font-size: 13px; }
-    header .hm { font-size: 12px; opacity: .8; }
-    .body { padding: 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+    *, *::before, *::after { box-sizing: border-box; }
+    .panel { position: fixed; right: 16px; bottom: 16px; width: 368px; max-height: min(80vh, 760px); display: flex; flex-direction: column;
+      background: ${C.paper}; color: ${C.ink}; border: 1px solid ${C.line2}; border-radius: 12px; overflow: hidden;
+      box-shadow: 0 12px 32px rgba(23, 24, 29, .18), 0 2px 6px rgba(23, 24, 29, .08);
+      font: 13px/1.45 ${FONT}; z-index: 2147483000; }
+    .panel.closed { width: auto; max-width: 368px; border-radius: 999px; border-color: ${C.ink}; }
 
-    button { font: inherit; padding: 4px 9px; border: 1px solid #c3c7ce; border-radius: 6px; background: #fff; color: #1d1d1f; cursor: pointer; }
-    button:hover { background: #f1f2f4; }
-    button:disabled { opacity: .5; cursor: default; }
-    button.primary { background: #2563eb; border-color: #2563eb; color: #fff; font-weight: 600; }
-    button.primary:hover { background: #1d4fd0; }
-    button.on { background: #fde68a; border-color: #d4a72c; }
-    button.mini { padding: 1px 7px; font-size: 12px; }
-    button.link { border: 0; background: none; padding: 2px 0; color: #2563eb; font-size: 12px; }
-    button.link:hover { background: none; text-decoration: underline; }
-    .x { border: 0 !important; background: none !important; color: #8a8f98; font-size: 16px !important; line-height: 1; padding: 0 4px !important; }
-    .x:hover { color: #1d1d1f; }
-    select { flex: 1; min-width: 0; padding: 4px; font: inherit; border: 1px solid #c3c7ce; border-radius: 6px; background: #fff; }
-    .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    header { display: flex; align-items: center; gap: 9px; padding: 11px 14px 10px; background: ${C.ink}; color: #fff;
+      cursor: pointer; user-select: none; position: relative; }
+    header::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 4px; background: ${STRIPES}; }
+    .panel.closed header { padding: 9px 16px 9px 12px; }
+    .panel.closed header::before { display: none; }
+    .wordmark { font-size: 14.5px; font-weight: 700; letter-spacing: -.015em; white-space: nowrap; }
+    .hm { font-size: 12px; color: #c9ccd4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hchev { margin-left: auto; color: #c9ccd4; font-size: 12px; }
+    .bc-mark { display: inline-flex; line-height: 0; flex: none; }
 
-    .card { background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; }
-    .card-h { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; border-radius: 8px; background: none; padding: 8px 10px; text-align: left; }
-    .card-h:hover { background: #f7f8fa; }
-    .chev { width: 10px; color: #6b7280; font-size: 11px; }
-    .card-t { font-weight: 600; }
-    .card-m { flex: 1; min-width: 0; text-align: right; color: #6b7280; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .card-b { padding: 0 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+    .body { overflow-y: auto; overscroll-behavior: contain; }
+    .intro { padding: 12px 16px 2px; color: ${C.muted}; }
 
-    .range { border: 1px solid #e1e4e8; border-radius: 6px; padding: 4px 6px; display: flex; flex-direction: column; gap: 4px; }
-    .range.active { border-color: #93c5fd; background: #eff6ff; }
-    .range-row { display: flex; align-items: center; gap: 2px; }
-    .pick { flex: 1; min-width: 0; display: flex; gap: 6px; align-items: baseline; border: 0; background: none; padding: 2px 0; text-align: left; }
-    .pick:hover { background: none; }
-    .dot { color: #2563eb; width: 10px; flex: none; }
-    .rl { flex: 1; min-width: 0; }
-    .extras { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; padding-left: 16px; }
-    .day { display: flex; gap: 4px; align-items: center; }
-    .day input { font: 12px system-ui, sans-serif; padding: 2px 3px; border: 1px solid #c3c7ce; border-radius: 4px; min-width: 0; background: #fff; }
+    button { font: inherit; color: ${C.ink}; padding: 5px 11px; border: 1px solid ${C.line2}; border-radius: 6px; background: ${C.paper}; cursor: pointer; }
+    button:hover { border-color: ${C.ink}; }
+    button:disabled { opacity: .45; cursor: default; border-color: ${C.line2}; }
+    button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid ${C.focus}; outline-offset: 2px; }
+    button.primary { background: ${C.ink}; border-color: ${C.ink}; color: #fff; font-weight: 600; padding: 7px 14px; }
+    button.primary:hover { background: ${C.ink2}; }
+    button.on { background: ${C.tapeSoft}; border-color: ${C.tapeLine}; }
+    button.mini { padding: 2px 9px; font-size: 12px; }
+    button.link { border: 0; background: none; padding: 2px 0; font-size: 12.5px; color: ${C.ink}; text-decoration: underline;
+      text-decoration-color: ${C.line2}; text-underline-offset: 3px; }
+    button.link:hover { text-decoration-color: ${C.ink}; }
+    .x { border: 0 !important; background: none !important; color: ${C.muted}; font-size: 17px !important; line-height: 1; padding: 0 4px !important; }
+    .x:hover { color: ${C.ink}; }
+    select { flex: 1; min-width: 0; font: inherit; color: ${C.ink}; padding: 5px 8px; border: 1px solid ${C.line2}; border-radius: 6px; background: ${C.paper}; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+    .card { border-top: 1px solid ${C.line}; }
+    .card:first-child { border-top: 0; }
+    .card-h { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; border-radius: 0; background: none; padding: 11px 16px; text-align: left; }
+    .card-h:hover { background: ${C.mist}; border: 0; }
+    .card-t { font-weight: 700; font-size: 13.5px; }
+    .card-m { flex: 1; min-width: 0; text-align: right; color: ${C.muted}; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .chev { margin-left: auto; color: ${C.muted}; font-size: 11px; width: 10px; text-align: right; }
+    .card-m + .chev { margin-left: 0; }
+    .card-b { padding: 0 16px 14px; display: flex; flex-direction: column; gap: 8px; }
+
+    .range { border: 1px solid ${C.line}; border-radius: 8px; padding: 6px 8px; display: flex; flex-direction: column; gap: 5px; }
+    .range.active { border: 1.5px solid ${C.ink}; background: ${C.tapeSoft}; padding: 5.5px 7.5px; }
+    .range-row { display: flex; align-items: center; gap: 4px; }
+    .pick { flex: 1; min-width: 0; display: flex; gap: 8px; align-items: baseline; border: 0; background: none; padding: 2px 0; text-align: left; }
+    .pick:hover { border: 0; }
+    .dot { width: 10px; flex: none; font-size: 11px; color: ${C.muted}; }
+    .range.active .dot { color: ${C.ink}; }
+    .rl { flex: 1; min-width: 0; font-weight: 600; }
+    .rl .len { display: block; font-weight: 400; font-size: 12px; color: ${C.muted}; }
+    .fit { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; font-size: 12.5px; padding: 7px 9px;
+      background: ${C.paper}; border: 1px solid ${C.tapeLine}; border-radius: 6px; width: 100%; }
+    .extras { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; padding-left: 18px; }
+    .day { display: flex; gap: 6px; align-items: center; }
+    .day input { font: 12.5px ${FONT}; color: ${C.ink}; padding: 3px 5px; border: 1px solid ${C.line2}; border-radius: 5px; min-width: 0; background: ${C.paper}; }
     .day input[type=date] { flex: 1.4; } .day input[type=time] { flex: 1; }
-    .day .lbl { width: 46px; flex: none; font-size: 12px; color: #4b5563; }
+    .day .lbl { width: 48px; flex: none; font-size: 12px; color: ${C.muted}; }
 
-    ul { list-style: none; margin: 0; padding: 0; border: 1px solid #e1e4e8; border-radius: 6px; }
-    li.slot { display: flex; gap: 6px; align-items: flex-start; padding: 6px 8px; border-top: 1px solid #eef0f2; }
+    ul { list-style: none; margin: 0; padding: 0; border: 1px solid ${C.line}; border-radius: 8px; }
+    li.slot { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-top: 1px solid ${C.line}; }
     li.slot:first-child { border-top: 0; }
-    li.slot.target { background: #fffbeb; }
-    .opts { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-    .opt { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
-    .opt .nm { flex: 1; min-width: 0; }
-    .opt .or { color: #6b7280; font-size: 11px; }
-    .opt.alt { font-size: 12px; padding-left: 10px; color: #374151; }
+    li.slot.target { background: ${C.tapeSoft}; }
+    .opts { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+    .opt { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+    .opt .nm { flex: 1 1 150px; min-width: 0; } /* keeps names readable: a long badge wraps under the name instead */
+    .opt .or { color: ${C.muted}; font-size: 11.5px; }
+    .opt.alt { font-size: 12.5px; padding-left: 12px; color: ${C.ink2}; }
     .tools { display: flex; gap: 2px; align-items: center; }
-    .badge { display: inline-block; padding: 0 7px; border-radius: 9px; font-size: 11px; white-space: nowrap; }
-    .ok { background: #dcfce7; color: #166534; } .limited { background: #fef3c7; color: #92400e; }
-    .bad { background: #fee2e2; color: #991b1b; } .unknown { background: #e5e7eb; color: #374151; } .pending { background: #f3f4f6; color: #6b7280; }
+    .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+    .ok { background: ${C.okBg}; color: ${C.ok}; } .limited { background: ${C.partBg}; color: ${C.part}; }
+    .bad { background: ${C.noBg}; color: ${C.no}; } .unknown { background: ${C.unkBg}; color: ${C.unk}; } .pending { background: ${C.mist}; color: ${C.muted}; }
+    .actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding-top: 2px; }
 
-    .warn { width: 100%; color: #92400e; font-size: 12px; }
-    .freepart { width: 100%; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: 12px; color: #374151; }
-    .detail { width: 100%; color: #4b5563; font-size: 11px; }
-    .muted { color: #6b7280; font-size: 12px; }
-    .okline { color: #166534; font-size: 12px; }
-    .hint { background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 6px 8px; font-size: 12px; }
-    .status { position: relative; white-space: pre-wrap; background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; padding: 8px 26px 8px 10px; font-size: 12px; }
-    .status .close { position: absolute; top: 6px; right: 4px; }
-    .status .row { margin-top: 6px; white-space: normal; }
+    .warn { width: 100%; color: ${C.part}; font-size: 12px; }
+    .detail { width: 100%; color: ${C.muted}; font-size: 11.5px; }
+    .muted { color: ${C.muted}; font-size: 12px; }
+    .okline { color: ${C.ok}; font-size: 12.5px; font-weight: 600; }
+    .hint { background: ${C.tapeSoft}; border: 1px solid ${C.tapeLine}; border-radius: 8px; padding: 7px 10px; font-size: 12.5px; }
+    .freepart { width: 100%; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: 12px; color: ${C.ink2}; }
+    .status { position: relative; margin: 12px 16px 4px; white-space: pre-wrap; background: ${C.mist}; border-left: 3px solid ${C.ink};
+      border-radius: 6px; padding: 9px 30px 9px 11px; font-size: 12.5px; }
+    .status .close { position: absolute; top: 7px; right: 6px; }
+    .status .row { margin-top: 7px; white-space: normal; }
+    .foot { color: ${C.muted}; font-size: 11.5px; }
 
-    .repl { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; padding-left: 10px; }
-    .repl button, .gate button { font-size: 12px; }
-    .cand { display: flex; gap: 6px; align-items: baseline; justify-content: space-between; width: 100%; font-size: 12px; }
+    .repl { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; padding-left: 12px; }
+    .repl button, .gate button { font-size: 12px; padding: 2px 9px; }
+    .cand { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; width: 100%; font-size: 12.5px; }
     .cand button { flex: none; }
-    .gate { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid #bfdbfe; padding-top: 6px; }
-    .sugs { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+    .gate { display: flex; flex-direction: column; gap: 5px; border-top: 1px solid ${C.line}; padding-top: 8px; }
+    .sugs { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; }
     .sugs button { font-size: 12px; }
-    .run { border: 2px solid #2563eb; border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; background: #eff6ff; }
+    .run { position: relative; margin: 12px 16px; border: 1.5px solid ${C.ink}; border-radius: 10px; padding: 14px 12px 10px;
+      display: flex; flex-direction: column; gap: 7px; overflow: hidden; }
+    .run::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 5px; background: ${STRIPES}; }
+    .run-t { font-weight: 700; font-size: 13.5px; }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
   `;
 
   function el(tag, attrs, ...kids) {
@@ -1739,9 +1842,9 @@
     const open = ui[key] == null ? defaultOpen : !!ui[key];
     return el('section', { class: 'card' },
       el('button', { class: 'card-h', 'aria-expanded': String(open), onclick: () => { ui[key] = !open; saveUi(); render(); } },
-        el('span', { class: 'chev' }, open ? '▾' : '▸'),
         el('span', { class: 'card-t' }, title),
-        open ? null : el('span', { class: 'card-m' }, meta || '')), // the summary only matters when it's closed
+        open ? null : el('span', { class: 'card-m' }, meta || ''), // the summary only matters when it's closed
+        el('span', { class: 'chev', 'aria-hidden': 'true' }, open ? '▾' : '▸')),
       open ? el('div', { class: 'card-b' }, body) : null);
   }
 
@@ -1791,14 +1894,15 @@
     if (sum) kids.push(el('div', { class: 'muted' }, sum));
     const ago = checkedAgo();
     if (ago && !loadingAvail) {
-      kids.push(el('div', { class: 'muted' }, ago + ' · ',
+      kids.push(el('div', { class: 'muted' }, ago + '. ',
         el('button', { class: 'link', title: 'Check these dates again now (results are saved for ' + CACHE_MINUTES + ' minutes)', onclick: refreshAvailability }, 'Refresh')));
     }
     else if (!isSelectPage()) kids.push(el('div', { class: 'muted' }, 'Open the equipment list to see what\'s free then.'));
     const pr = p && p.slots.length ? rangeProblems(p, b) : null;
     if (pr && pr.fix) {
-      kids.push(el('button', { class: 'mini', title: 'Change these dates to times every item in the preset is free', onclick: () => fitTimes(i, pr.fix) },
-        'Fit times: ' + shortLabel(pr.fix)));
+      kids.push(el('div', { class: 'fit' },
+        el('span', {}, 'Everything in your list is free ' + shortLabel(pr.fix) + '.'),
+        el('button', { class: 'mini', title: 'Change these dates to ' + bookingLabel(pr.fix), onclick: () => fitTimes(i, pr.fix) }, 'Use those times')));
     }
     return kids.length ? el('div', { class: 'extras' }, kids) : null;
   }
@@ -1808,7 +1912,7 @@
     const active = activeIndex();
     const kids = [];
     if (!schedule.ranges.length) {
-      kids.push(el('div', { class: 'muted' }, 'Add when you need gear. Every item on the list then shows whether it\'s free, and Book makes the bookings.'));
+      kids.push(el('div', { class: 'muted' }, 'Add when you\'ll pick up and return the gear. Every item on the equipment list then shows whether it\'s free.'));
     }
     schedule.ranges.forEach((r, i) => {
       const b = bookings.find((x) => x.index === i);
@@ -1817,10 +1921,10 @@
       kids.push(el('div', { class: 'range' + (isActive ? ' active' : '') },
         el('div', { class: 'range-row' },
           el('button', { class: 'pick', 'aria-pressed': String(isActive), title: isActive ? 'Availability shown for these dates' : 'Show availability for these dates', onclick: () => selectRange(i) },
-            el('span', { class: 'dot' }, isActive ? '●' : '○'),
-            el('span', { class: 'rl' }, b ? shortLabel(b) : 'Set the dates', b ? el('span', { class: 'muted' }, ' · ' + b.days + (b.days > 1 ? ' days' : ' day')) : null)),
+            el('span', { class: 'dot', 'aria-hidden': 'true' }, isActive ? '●' : '○'),
+            el('span', { class: 'rl' }, b ? shortLabel(b) : 'Set the dates', b ? el('span', { class: 'len' }, b.days + (b.days > 1 ? ' days' : ' day')) : null)),
           el('button', { class: 'link', title: editing ? 'Done editing' : 'Change these dates', onclick: () => { ui.editRange = editing ? null : i; saveUi(); render(); } }, editing ? 'Done' : 'Edit'),
-          el('button', { class: 'x', title: 'Remove these dates', onclick: () => removeRange(i) }, '×')),
+          el('button', { class: 'x', title: 'Remove these dates', 'aria-label': 'Remove these dates', onclick: () => removeRange(i) }, '×')),
         editing || !b ? rangeEditor(r, i) : null,
         b && b.warnings.length ? el('div', { class: 'warn' }, '⚠ ' + b.warnings.join('; ')) : null,
         isActive && b && !b.invalid ? rangeExtras(p, b, i) : null));
@@ -1838,15 +1942,15 @@
       const f = a && act.booking ? fitFor(a, act.booking) : null;
       const kind = !a ? (ab ? 'pending' : null) : f ? (f.kind === 'hours' ? 'limited' : f.kind) : a.kind;
       const part = a && ab ? freePart(a, ab) : null;
-      const label = !a ? 'Checking…' : f && f.kind === 'hours' ? cap(f.why) : part ? 'Part of the time' : a.label;
+      const plain = { ok: 'Free', bad: 'Not free', limited: 'Part of the time', unknown: 'Couldn\'t check' };
+      const label = !a ? 'Checking…' : f && f.kind === 'hours' ? cap(f.why) : part ? 'Part of the time' : plain[kind] || a.label;
       return el('div', { class: 'opt' + (oi ? ' alt' : '') },
         oi ? el('span', { class: 'or' }, 'or') : null,
         el('span', { class: 'nm' }, o.name),
         kind ? el('span', { class: 'badge ' + kind, title: a ? a.detail || '' : '' }, label) : null,
-        editing && slot.options.length > 1 ? el('button', { class: 'x', title: 'Remove this unit', onclick: () => removeOption(si, oi) }, '×') : null,
+        editing && slot.options.length > 1 ? el('button', { class: 'x', title: 'Remove this backup', 'aria-label': 'Remove ' + o.name, onclick: () => removeOption(si, oi) }, '×') : null,
         o.note && WARN_RE.test(o.note) ? el('div', { class: 'warn' }, '⚠ ' + o.note) : null,
-        part ? el('div', { class: 'freepart' }, 'Free ' + shortLabel(part),
-          el('button', { class: 'link', title: 'Change your selected dates to ' + bookingLabel(part), onclick: () => useDates(part) }, 'Use these dates')) : null,
+        part ? el('div', { class: 'freepart' }, 'Free ' + shortLabel(part)) : null,
         a && kind !== 'ok' && a.detail && !part && !(f && f.kind === 'hours') ? el('div', { class: 'detail' }, a.detail) : null);
     });
     // Nothing in this slot is free for the selected dates: offer something similar.
@@ -1854,14 +1958,14 @@
     const noFit = ab && !editing && !getRun() && units.length && units.every((f) => f.kind !== 'ok' && f.kind !== 'unknown');
     return el('li', { class: 'slot' + (ui.altFor === si ? ' target' : '') },
       el('div', { class: 'opts' }, opts,
-        noFit ? renderReplacements('slot:' + bookingLabel(ab) + ':' + si, slot.options[0], ab, p, '+ Use as alternate', (c) => {
+        noFit ? renderReplacements('slot:' + bookingLabel(ab) + ':' + si, slot.options[0], ab, p, 'Add as backup', (c) => {
           addAlternate(ui.current, slot.options[0].id, c);
           replacements = {};
           render();
         }) : null),
       editing ? el('div', { class: 'tools' },
-        el('button', { class: 'mini' + (ui.altFor === si ? ' on' : ''), title: 'Add backups for this item from the list', onclick: () => toggleAltMode(si) }, ui.altFor === si ? 'Done' : '+ alt'),
-        el('button', { class: 'x', title: 'Remove from the preset', onclick: () => removeSlot(si) }, '×')) : null);
+        el('button', { class: 'mini' + (ui.altFor === si ? ' on' : ''), title: 'Add backups for this item: gear that can stand in if it\'s taken', onclick: () => toggleAltMode(si) }, ui.altFor === si ? 'Done' : '+ Backup'),
+        el('button', { class: 'x', title: 'Remove from the list', 'aria-label': 'Remove ' + slot.options[0].name, onclick: () => removeSlot(si) }, '×')) : null);
   }
 
   const NEW_PRESET = '\u0000new';
@@ -1870,31 +1974,31 @@
     const names = Object.keys(presets);
     const kids = [];
     if (!names.length) {
-      kids.push(el('div', { class: 'muted' }, 'Save the gear you book every week, then add it all in one click.'));
-      kids.push(el('div', { class: 'row' }, el('button', { class: 'mini', onclick: newPreset }, '+ New preset')));
+      kids.push(el('div', { class: 'muted' }, 'Save the gear you check out every time. Then one click adds it all to your basket.'));
+      kids.push(el('div', { class: 'row' }, el('button', { class: 'mini', onclick: newPreset }, 'New gear list')));
       return kids;
     }
     kids.push(el('div', { class: 'row' },
-      el('select', { 'aria-label': 'Preset', onchange: (e) => {
+      el('select', { 'aria-label': 'Gear list', onchange: (e) => {
         if (e.target.value === NEW_PRESET) { e.target.value = ui.current; return newPreset(); }
         ui.current = e.target.value; ui.editing = false; ui.altFor = null; saveUi(); render();
       } },
         names.map((n) => el('option', { value: n, selected: n === ui.current }, n + ' (' + presets[n].slots.length + ')')),
-        el('option', { value: NEW_PRESET }, '+ New preset…')),
+        el('option', { value: NEW_PRESET }, 'New gear list…')),
       p ? el('button', { class: ui.editing ? 'on' : '', onclick: () => { ui.editing = !ui.editing; if (!ui.editing) ui.altFor = null; saveUi(); render(); } }, ui.editing ? 'Done' : 'Edit') : null));
     if (!p) return kids;
 
     if (ui.editing) {
       kids.push(el('div', { class: 'hint' }, ui.altFor != null && p.slots[ui.altFor]
-        ? 'Click "+ Alt" on items in the list that can stand in for ' + p.slots[ui.altFor].options[0].name + ', in the order you\'d want them.'
-        : 'Click "+ Preset" on items in the equipment list to add them. "+ alt" adds backups for an item.'));
+        ? 'Click "+ Backup" on gear in the equipment list that can stand in for ' + p.slots[ui.altFor].options[0].name + ', in the order you\'d want it.'
+        : 'Click "+ Save to list" on gear in the equipment list to add it here. "+ Backup" adds stand-ins for an item in case it\'s taken.'));
     }
-    if (p.slots.length) kids.push(el('ul', {}, p.slots.map((sl, si) => renderSlot(sl, si, act, p))));
-    else kids.push(el('div', { class: 'muted' }, ui.editing ? 'Nothing yet.' : 'Empty. Press Edit, then "+ Preset" on items in the list.'));
+    if (p.slots.length) kids.push(el('ul', { 'aria-label': ui.current }, p.slots.map((sl, si) => renderSlot(sl, si, act, p))));
+    else kids.push(el('div', { class: 'muted' }, ui.editing ? 'Nothing saved yet.' : 'This list is empty. Press Edit, then "+ Save to list" on gear in the equipment list.'));
     if (ui.editing) {
       kids.push(el('div', { class: 'row' },
         el('button', { class: 'link', onclick: renamePreset }, 'Rename'),
-        el('button', { class: 'link', onclick: deletePreset }, 'Delete preset')));
+        el('button', { class: 'link', onclick: deletePreset }, 'Delete list')));
       return kids;
     }
 
@@ -1902,16 +2006,16 @@
       const bookings = computeBookings(schedule.ranges);
       const busy = !!queue || starting || !!getRun();
       const where = isSelectPage();
-      const addBtn = (cls, label) => el('button', { class: cls, disabled: busy || !where, title: 'Add one of each item to the basket' + (act ? ' (a unit that\'s free for ' + act.label + ')' : ''), onclick: () => startQueue(ui.current) }, label);
+      const addBtn = (cls, label) => el('button', { class: cls, disabled: busy || !where, title: 'Add one of each item to your basket' + (act ? ' (a unit that\'s free ' + act.label + ')' : ''), onclick: () => startQueue(ui.current) }, label);
       if (bookings.length) {
-        kids.push(el('div', { class: 'row' },
-          el('button', { class: 'primary', disabled: busy || !where || bookings.some((b) => b.invalid), title: 'One booking per date range; each stops at Terms & Conditions for you to finish', onclick: startRun },
-            'Book ' + bookings.length + (bookings.length > 1 ? ' date ranges' : ' date range')),
-          addBtn('link', 'or just add to basket')));
+        kids.push(el('div', { class: 'actions' },
+          el('button', { class: 'primary', disabled: busy || !where || bookings.some((b) => b.invalid), title: 'One booking per date. Each stops at Terms & Conditions for you to finish.', onclick: startRun },
+            bookings.length > 2 ? 'Book all ' + bookings.length + ' dates' : bookings.length === 2 ? 'Book both dates' : 'Book these dates'),
+          addBtn('link', 'Add to basket only')));
       } else {
-        kids.push(el('div', { class: 'row' }, addBtn('primary', 'Add to basket')));
+        kids.push(el('div', { class: 'actions' }, addBtn('primary', 'Add to basket')));
       }
-      if (!where) kids.push(el('div', { class: 'muted' }, 'Open the equipment list to add or book.'));
+      if (!where) kids.push(el('div', { class: 'muted' }, 'Open Book by Category → ' + (p.category || 'your equipment list') + ' to add or book.'));
     }
     return kids;
   }
@@ -1919,21 +2023,22 @@
   // ----- More section -----
   function renderMore() {
     const names = Object.keys(presets);
+    const p = presets[ui.current];
     return [
       el('div', { class: 'row' },
-        el('button', { class: 'mini', onclick: copyShareLink, disabled: !presets[ui.current] || !presets[ui.current].slots.length, title: 'A link that adds this preset for anyone with the script installed' },
-          presets[ui.current] ? 'Copy link to share "' + ui.current + '"' : 'Copy share link'),
-        el('button', { class: 'mini', onclick: exportPresets, disabled: !names.length, title: 'All your presets as text' }, 'Export all'),
-        el('button', { class: 'mini', onclick: importPresets }, 'Import')),
+        el('button', { class: 'mini', onclick: copyShareLink, disabled: !p || !p.slots.length, title: 'Copy a link that adds this gear list for anyone with Better Checkout' },
+          p ? 'Share "' + ui.current + '"' : 'Share a list'),
+        el('button', { class: 'mini', onclick: exportPresets, disabled: !names.length, title: 'Copy all your gear lists as text' }, 'Export lists'),
+        el('button', { class: 'mini', onclick: importPresets, title: 'Add gear lists from exported text' }, 'Import lists')),
       el('div', { class: 'row' },
         store.get('scan', null)
           ? el('button', { class: 'mini', onclick: stopScan }, 'Stop scan')
-          : el('button', { class: 'mini', onclick: startScan, disabled: !isSelectPage() || !!store.get('queue', null) || !!getRun(), title: 'Page through the whole equipment list once so the script can suggest replacements' },
+          : el('button', { class: 'mini', onclick: startScan, disabled: !isSelectPage() || !!store.get('queue', null) || !!getRun(), title: 'Page through the whole equipment list once, so Better Checkout can suggest similar gear' },
             catalogSize() ? 'Rescan equipment list' : 'Scan equipment list'),
-        el('button', { class: 'mini', onclick: copyProblemReport, title: 'Copy what the script did and found, to send to whoever maintains it' }, 'Copy problem report')),
-      el('div', { class: 'muted' }, catalogSize()
-        ? 'Replacement suggestions draw on ' + catalogSize() + ' known items.'
-        : 'Scan the list once so the script can suggest replacements.'),
+        el('button', { class: 'mini', onclick: copyProblemReport, title: 'Copy what Better Checkout did and found, to send to whoever maintains it' }, 'Copy problem report')),
+      el('div', { class: 'foot' }, 'Better Checkout ' + VERSION + '. ' + (catalogSize()
+        ? 'Knows ' + catalogSize() + ' items for suggesting similar gear.'
+        : 'Scan the equipment list once to get suggestions for similar gear.')),
     ];
   }
 
@@ -1941,7 +2046,9 @@
     const n = run.bookings.length;
     const bk = run.bookings[run.b];
     const last = run.b + 1 >= n;
-    const box = el('div', { class: 'run' }, el('b', {}, 'Booking ' + (run.b + 1) + ' of ' + n + ': ' + bookingLabel(bk)));
+    const box = el('div', { class: 'run', role: 'region', 'aria-label': 'Booking in progress' },
+      el('div', { class: 'run-t' }, 'Booking ' + (run.b + 1) + ' of ' + n),
+      el('div', { class: 'muted' }, bookingLabel(bk) + ' · ' + run.preset));
     if (run.stage === 'gate' && run.gate) {
       const p = presets[run.preset];
       box.append(el('div', {}, 'Nothing has been added yet. These items aren\'t free for this booking:'));
@@ -1965,7 +2072,7 @@
       box.append(el('div', { class: 'okline' }, '✓ Booking ' + (run.b + 1) + ' of ' + n + ' is complete.'));
       box.append(el('div', { class: 'muted' }, 'Next: ' + bookingLabel(run.bookings[run.b + 1]) + '.'));
     } else if (run.stage !== 'handoff') {
-      box.append(el('div', {}, run.stage === 'basket' ? 'Adding "' + run.preset + '" to the basket…' : 'Setting the times…'));
+      box.append(el('div', {}, run.stage === 'basket' ? 'Adding your gear to the basket…' : 'Setting the times…'));
     } else {
       if (run.problem) box.append(el('div', { class: 'warn' }, '⚠ ' + run.problem));
       const clash = isTimePage() && run.problem ? clashInfo() : null;
@@ -1988,10 +2095,10 @@
           if (!opt) continue;
           box.append(el('div', { class: 'gate' },
             el('div', {}, 'Replace ' + ci.item + '?'),
-            renderReplacements('clash:' + run.b + ':' + opt.id, opt, bk, p, '+ Use as alternate', (c) => {
+            renderReplacements('clash:' + run.b + ':' + opt.id, opt, bk, p, 'Add as backup', (c) => {
               addAlternate(run.preset, opt.id, c);
               replacements = {};
-              setStatus(c.name + ' is now an alternate for ' + opt.name + '. To use it for this booking: press Back, empty your basket, then press Redo booking ' + (run.b + 1) + '.');
+              setStatus(c.name + ' is now a backup for ' + opt.name + '. To use it for this booking: press Back, empty your basket, then press Redo booking ' + (run.b + 1) + '.');
             })));
         }
       } else {
@@ -2018,24 +2125,18 @@
     root.append(el('style', {}, CSS));
 
     const ab = activeBooking();
-    const panel = el('div', { class: 'panel' + (ui.open ? '' : ' closed') },
-      el('header', { onclick: () => { ui.open = !ui.open; saveUi(); render(); } },
-        el('b', {}, 'Gear presets'),
-        !ui.open && ab ? el('span', { class: 'hm' }, shortLabel(ab)) : null,
-        el('span', {}, ui.open ? '▾' : '▴')));
+    const head = el('header', { role: 'button', tabindex: '0', 'aria-expanded': String(!!ui.open), title: ui.open ? 'Minimize Better Checkout' : 'Open Better Checkout',
+      onclick: () => { ui.open = !ui.open; saveUi(); render(); },
+      onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); ui.open = !ui.open; saveUi(); render(); } } });
+    head.append(logoEl(20, true), el('span', { class: 'wordmark' }, 'Better Checkout'));
+    if (!ui.open && ab) head.append(el('span', { class: 'hm' }, shortLabel(ab)));
+    head.append(el('span', { class: 'hchev', 'aria-hidden': 'true' }, ui.open ? '▾' : '▴'));
+    const panel = el('div', { class: 'panel' + (ui.open ? '' : ' closed'), role: 'complementary', 'aria-label': 'Better Checkout' }, head);
 
     if (ui.open) {
       const body = el('div', { class: 'body' });
       const run = getRun();
       if (run) body.append(renderRun(run));
-
-      body.append(card('showDates', true, 'Dates',
-        schedule.ranges.length ? (ab ? shortLabel(ab) : schedule.ranges.length + ' saved') : 'none yet',
-        renderDates(p)));
-      body.append(card('showPresets', true, 'Preset',
-        p ? ui.current + ' · ' + p.slots.length + (p.slots.length === 1 ? ' item' : ' items') : 'none yet',
-        renderPreset(p, act, queue)));
-
       if (statusText || queue) {
         body.append(el('div', { class: 'status', role: 'status' },
           statusText,
@@ -2043,10 +2144,19 @@
             el('button', { class: 'mini', onclick: () => runQueue(true) }, 'Resume'),
             el('button', { class: 'mini', onclick: stopQueue }, 'Stop')) : null,
           statusUndo && !queue ? el('div', { class: 'row' }, el('button', { class: 'mini', onclick: () => statusUndo() }, 'Undo')) : null,
-          !queue ? el('button', { class: 'x close', title: 'Dismiss', onclick: () => setStatus('') }, '×') : null));
+          !queue ? el('button', { class: 'x close', title: 'Dismiss', 'aria-label': 'Dismiss', onclick: () => setStatus('') }, '×') : null));
+      }
+      if (!run && !schedule.ranges.length && !Object.keys(presets).length) {
+        body.append(el('div', { class: 'intro' }, 'Pick your dates, save the gear you use, then book it all in one go.'));
       }
 
-      body.append(card('showMore', false, 'More', '', renderMore()));
+      body.append(card('showDates', true, 'Dates',
+        schedule.ranges.length ? (ab ? shortLabel(ab) : schedule.ranges.length + ' saved') : 'None yet',
+        renderDates(p)));
+      body.append(card('showPresets', true, 'Gear list',
+        p ? ui.current + ', ' + p.slots.length + (p.slots.length === 1 ? ' item' : ' items') : 'None yet',
+        renderPreset(p, act, queue)));
+      body.append(card('showMore', false, 'Share and help', '', renderMore()));
       panel.append(body);
     }
     root.append(panel);
@@ -2069,23 +2179,22 @@
       b.className = 'c2p-toggle';
       // Same width as Connect2's Add button, on its own line underneath it.
       const w = it.btn ? it.btn.offsetWidth : 0;
-      let style = 'display:block;box-sizing:border-box;width:' + (w ? w + 'px' : '100%') + ';max-width:100%;margin:0;' +
-        'padding:6px 10px;border-radius:4px;font-size:14px;line-height:1.42857;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;';
+      b.style.cssText = 'box-sizing:border-box;width:' + (w ? w + 'px' : '100%') + ';max-width:100%;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+      let label;
       if (pos) {
-        b.textContent = pos.oi ? '✓ Alternate' : '✓ In preset';
-        b.title = 'Click to remove from the preset';
-        style += 'background:#fde68a;border:1px solid #d4a72c;color:#1d1d1f;';
+        label = pos.oi ? '✓ Backup' : '✓ Saved';
+        b.classList.add('saved');
+        b.title = 'Better Checkout: in "' + ui.current + '". Click to remove it.';
       } else if (!it.allowed) {
-        b.textContent = 'Can\'t book';
+        label = 'Can\'t book';
         b.title = it.reason;
         b.disabled = true;
-        style += 'background:#f3f4f6;border:1px solid #d1d5db;color:#6b7280;cursor:not-allowed;';
       } else {
-        b.textContent = altMode ? '+ Alt' : '+ Preset';
-        style += 'background:#fff;border:1px solid #2563eb;color:#2563eb;';
+        label = altMode ? '+ Backup' : '+ Save to list';
+        b.title = 'Better Checkout: add to "' + ui.current + '"' + (altMode ? ' as a backup for ' + p.slots[ui.altFor].options[0].name : '');
       }
-      if (!pos && it.allowed && it.note && WARN_RE.test(it.note)) b.title = 'Note: ' + it.note;
-      b.style.cssText = style;
+      if (!pos && it.allowed && it.note && WARN_RE.test(it.note)) b.title += '. Note: ' + it.note;
+      b.append(logoEl(14), document.createTextNode(label));
       b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); toggleItem(it); });
       const area = it.li.querySelector('.resource-book') || it.li;
       area.style.flexWrap = 'wrap'; // in case Connect2 lays the area out as a row
