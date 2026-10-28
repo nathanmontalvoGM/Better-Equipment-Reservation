@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Better Checkout
 // @namespace    better-checkout.mtsu
-// @version      1.0.1
+// @version      1.1.0
 // @description  A friendlier way to book gear on MTSU's Connect2 equipment checkout: see what's free for your dates, save the gear you use as lists, and book several dates in a row.
 // @author       Nathan Montalvo
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHJlY3QgeD0iMiIgeT0iMy4yIiB3aWR0aD0iMjAiIGhlaWdodD0iNS4zIiByeD0iMS40IiBmaWxsPSIjMTcxODFkIi8+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTYuMiAzLjJoMi45TDYuNiA4LjVIMy43ek0xMi4yIDMuMmgyLjlsLTIuNSA1LjNIOS43ek0xOC4yIDMuMmgyLjlsLTIuNSA1LjNoLTIuOXoiLz48cmVjdCB4PSIyIiB5PSIxMCIgd2lkdGg9IjIwIiBoZWlnaHQ9IjExLjUiIHJ4PSIyIiBmaWxsPSIjMTcxODFkIi8+PHBhdGggZD0iTTcuNiAxNS42bDIuOSAyLjggNS45LTUuNyIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZjZjMzIiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PC9zdmc+
@@ -1810,6 +1810,12 @@
     .status .close { position: absolute; top: 7px; right: 6px; }
     .status .row { margin-top: 7px; white-space: normal; }
     .foot { color: ${C.muted}; font-size: 11.5px; }
+    .foot a { color: ${C.ink}; text-underline-offset: 2px; }
+    .news { margin: 12px 16px 4px; padding: 10px 12px 11px; border: 1px solid ${C.tapeLine}; background: ${C.tapeSoft}; border-radius: 8px;
+      display: flex; flex-direction: column; gap: 6px; align-items: flex-start; font-size: 12.5px; }
+    .news-t { font-weight: 700; font-size: 13px; }
+    .news ul { border: 0; border-radius: 0; padding-left: 18px; list-style: disc; display: flex; flex-direction: column; gap: 3px; }
+    .newtag { background: ${C.tape}; color: ${C.ink}; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; }
 
     .repl { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; padding-left: 12px; }
     .repl button, .gate button { font-size: 12px; padding: 2px 9px; }
@@ -2020,6 +2026,47 @@
     return kids;
   }
 
+  // ----- What's new -----
+  // One line per change people will notice, newest first. Shown once after an update, never on a first install.
+  const INSTALL_PAGE = 'https://nathanmontalvogm.github.io/Better-Equipment-Reservation/';
+  const CHANGES = [
+    { v: '1.1.0', notes: [
+      'After an update, a short note like this one tells you what changed.',
+      'Setting up a classmate? Send them the install guide: it\'s linked under Share and Help.',
+    ] },
+    { v: '1.0.1', notes: [
+      'Gear lists are called equipment presets again.',
+      '"Free" now says "available". The switch above the list is "Only show gear that\'s available".',
+    ] },
+  ];
+  function cmpVersion(a, b) {
+    const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+    for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
+    return 0;
+  }
+  // The changes since the version this browser last saw.
+  function whatsNew() {
+    if (!/^\d+\.\d+\.\d+$/.test(VERSION)) return []; // not running as an installed release
+    let seen = store.get('seenVersion', null);
+    if (!seen) {
+      // First run of a version with this note: someone with saved presets or dates had an earlier version.
+      seen = Object.keys(presets).length || schedule.ranges.length ? '1.0.0' : VERSION;
+      store.set('seenVersion', seen);
+    }
+    return CHANGES.filter((c) => cmpVersion(c.v, seen) > 0 && cmpVersion(c.v, VERSION) <= 0);
+  }
+  function dismissWhatsNew() {
+    store.set('seenVersion', VERSION);
+    log('what\'s new', 'dismissed for ' + VERSION);
+    render();
+  }
+  function renderWhatsNew(changes) {
+    return el('div', { class: 'news', role: 'status' },
+      el('div', { class: 'news-t' }, 'What\'s new in Better Checkout ' + VERSION),
+      el('ul', {}, changes.flatMap((c) => c.notes).map((n) => el('li', {}, n))),
+      el('button', { class: 'mini', onclick: dismissWhatsNew }, 'Got it'));
+  }
+
   // ----- More section -----
   function renderMore() {
     const names = Object.keys(presets);
@@ -2037,8 +2084,9 @@
             catalogSize() ? 'Rescan equipment list' : 'Scan equipment list'),
         el('button', { class: 'mini', onclick: copyProblemReport, title: 'Copy what Better Checkout did and found, to send to whoever maintains it' }, 'Copy problem report')),
       el('div', { class: 'foot' }, 'Better Checkout ' + VERSION + '. ' + (catalogSize()
-        ? 'Knows ' + catalogSize() + ' items for suggesting similar gear.'
-        : 'Scan the equipment list once to get suggestions for similar gear.')),
+        ? 'Knows ' + catalogSize() + ' items for suggesting similar gear. '
+        : 'Scan the equipment list once to get suggestions for similar gear. '),
+        el('a', { href: INSTALL_PAGE, target: '_blank', rel: 'noopener' }, 'Install guide'), ' (send it to classmates).'),
     ];
   }
 
@@ -2130,6 +2178,8 @@
       onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); ui.open = !ui.open; saveUi(); render(); } } });
     head.append(logoEl(20, true), el('span', { class: 'wordmark' }, 'Better Checkout'));
     if (!ui.open && ab) head.append(el('span', { class: 'hm' }, shortLabel(ab)));
+    const news = whatsNew();
+    if (!ui.open && news.length) head.append(el('span', { class: 'newtag' }, 'New'));
     head.append(el('span', { class: 'hchev', 'aria-hidden': 'true' }, ui.open ? '▾' : '▴'));
     const panel = el('div', { class: 'panel' + (ui.open ? '' : ' closed'), role: 'complementary', 'aria-label': 'Better Checkout' }, head);
 
@@ -2137,6 +2187,7 @@
       const body = el('div', { class: 'body' });
       const run = getRun();
       if (run) body.append(renderRun(run));
+      if (news.length) body.append(renderWhatsNew(news));
       if (statusText || queue) {
         body.append(el('div', { class: 'status', role: 'status' },
           statusText,

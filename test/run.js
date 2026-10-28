@@ -73,7 +73,7 @@ function fakeFetch(booked, limits, calls) {
  * Load the page once. `edit` can change the HTML first (e.g. basket count or dates).
  * Clicks on Connect2's own submit buttons are recorded and blocked instead of posting back.
  */
-function loadPage({ page = 'resource', edit, prompts = [], booked = [], limits = {}, url = URL, confirmAnswers = [] } = {}) {
+function loadPage({ page = 'resource', edit, prompts = [], booked = [], limits = {}, url = URL, confirmAnswers = [], version } = {}) {
   const vc = new VirtualConsole();
   vc.on('jsdomError', (e) => { if (!/navigation|submit/i.test(e.message)) console.log('  jsdom:', e.message); });
   const html = FIXTURES[page];
@@ -87,6 +87,7 @@ function loadPage({ page = 'resource', edit, prompts = [], booked = [], limits =
   w.alert = (m) => console.log('  alert:', m);
   const fetches = [];
   w.fetch = fakeFetch(booked, limits, fetches);
+  if (version) w.GM_info = { script: { version } }; // what Tampermonkey provides
   const postbacks = [];
   w.document.addEventListener('click', (e) => {
     const t = e.target;
@@ -830,6 +831,38 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   p = loadPage({ page: 'time', edit: completePage }); await wait();
   check(p.get('run') === null && p.status().includes('✓ All 2 bookings of "Lights" are complete. The run has ended.'), 'after the last booking, the run ends by itself');
   check(!p.root.querySelector('.run'), 'no End run button to press');
+
+  console.log('What\'s new after an update');
+  resetStorage();
+  p = loadPage({ version: '1.1.0' });
+  check(!p.root.querySelector('.news') && p.get('seenVersion') === '1.1.0', 'a first install shows no update note');
+  resetStorage();
+  storage['c2presets.presets'] = JSON.stringify({ Kit: { category: 'Media Arts Equipment', slots: [{ options: [{ id: ID.tripod, name: 'Tripod' }] }] } });
+  storage['c2presets.ui'] = JSON.stringify({ current: 'Kit', open: true });
+  p = loadPage({ version: '1.1.0' });
+  const newsText = () => (p.root.querySelector('.news') || { textContent: '' }).textContent;
+  check(newsText().startsWith('What\'s new in Better Checkout 1.1.0') && newsText().includes('a short note like this one') && newsText().includes('called equipment presets again'),
+    'someone updating from before the note sees what changed since 1.0');
+  check(p.root.querySelector('.body').firstElementChild.className === 'news', 'at the top of the panel');
+  p.button('Got it').click();
+  check(!p.root.querySelector('.news') && p.get('seenVersion') === '1.1.0', '"Got it" puts it away');
+  p.save();
+  p = loadPage({ version: '1.1.0' });
+  check(!p.root.querySelector('.news'), 'and it stays away');
+  storage['c2presets.seenVersion'] = JSON.stringify('1.0.1');
+  storage['c2presets.ui'] = JSON.stringify({ current: 'Kit', open: false });
+  p = loadPage({ version: '1.1.0' });
+  check(p.root.querySelector('header .newtag') && p.root.querySelector('header .newtag').textContent === 'New', 'a minimized panel shows a "New" tag');
+  p.root.querySelector('header').click();
+  check(newsText().includes('a short note like this one') && !newsText().includes('equipment presets again'), 'only changes newer than the last version seen');
+  resetStorage();
+  storage['c2presets.presets'] = JSON.stringify({ Kit: { category: '', slots: [] } });
+  p = loadPage();
+  check(!p.root.querySelector('.news'), 'nothing when not running as an installed release');
+  p = loadPage({ version: '1.1.0' });
+  p.card('Share and Help').click();
+  const guide = p.root.querySelector('.foot a');
+  check(guide && guide.textContent === 'Install guide' && guide.getAttribute('href') === 'https://nathanmontalvogm.github.io/Better-Equipment-Reservation/', 'Share and Help links the install guide');
 
   console.log('Saved pages with a leftover panel');
   p = loadPage({ page: 'time', edit: (h) => h.replace('</form>', '</form><div id="c2presets-host"></div>') });

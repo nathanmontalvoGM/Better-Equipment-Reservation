@@ -12,12 +12,16 @@ Better Checkout works inside your own signed-in Connect2 tab and only presses Co
 
 ## Install
 
+**Easiest: follow the [install guide](https://nathanmontalvogm.github.io/Better-Equipment-Reservation/).** It shows the steps for your browser. Send that link to classmates too.
+
+Or by hand:
+
 1. Install the free [Tampermonkey](https://www.tampermonkey.net/) extension for Chrome, Edge, or Firefox.
    - **Chrome only:** open `chrome://extensions`, click **Details** under Tampermonkey, and turn on **Allow User Scripts**. Without this, nothing happens.
 2. Open this link: **[Install Better Checkout](https://raw.githubusercontent.com/nathanmontalvoGM/Better-Equipment-Reservation/main/src/better-checkout.user.js)**. Tampermonkey shows an install page; click **Install**.
 3. In Connect2, open **Book by Category → Media Arts Equipment**. The Better Checkout panel appears in the bottom-right corner.
 
-Updates install themselves. To get one right away: Tampermonkey menu → **Utilities** → **Check for userscript updates**.
+Updates install themselves. To get one right away: Tampermonkey menu → **Utilities** → **Check for userscript updates**. After an update, the panel shows a short note about what changed; press **Got it** to put it away.
 
 ## Use it
 
@@ -82,6 +86,8 @@ How it fits together:
 - **Availability** comes from the JSON endpoints Connect2's own page uses (`/wizard/freetime/checkdaterangeforresource`), which answer per pair of dates with "collect from" / "return by" limits. Better Checkout compares those with your pickup and return times.
 - **Booking runs** are a second state machine: basket → Create booking → times filled → hand-off at Terms & Conditions → Complete. They only ever act on the Select resource and Select time steps.
 
-Release: bump `@version` in the script header for every change pushed to `main`; installed copies only update when it goes up.
+Release: bump `@version` in the script header for every change pushed to `main`; installed copies only update when it goes up. Add a line to `CHANGES` in the script (search for "What's new") for anything people will notice; it shows once as "What's new" after the update.
+
+The install guide is `docs/index.html`, served by GitHub Pages from `main` → `/docs`.
 
 When Connect2 changes a page, save it (**Save Page As → Webpage, HTML only**), scrub the student's name, `__VIEWSTATE`, `__EVENTVALIDATION`, `__RequestVerificationToken`, and the form's `hash=`, remove any `<div id="c2presets-host">` left by an installed copy, and replace the fixture.

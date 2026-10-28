@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Better Checkout</title>
+<meta name="description" content="A free add-on for MTSU's Connect2 equipment checkout: see what's available for your dates, save the gear you always take, and book it in a few clicks.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='2' y='3.2' width='20' height='5.3' rx='1.4' fill='%2317181d'/%3E%3Cpath fill='%23fff' d='M6.2 3.2h2.9L6.6 8.5H3.7zM12.2 3.2h2.9l-2.5 5.3H9.7zM18.2 3.2h2.9l-2.5 5.3h-2.9z'/%3E%3Crect x='2' y='10' width='20' height='11.5' rx='2' fill='%2317181d'/%3E%3Cpath d='M7.6 15.6l2.9 2.8 5.9-5.7' fill='none' stroke='%23ffcf33' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #17181d; --ink2: #2c2e37; --paper: #ffffff; --mist: #f4f5f7; --line: #e2e4e9; --line2: #cdd1d8;
+    --muted: #5d6270; --tape: #ffcf33; --tape-soft: #fff7d6; --tape-line: #ecd27a; --focus: #2563eb;
+    --stripes: repeating-linear-gradient(135deg, var(--ink) 0 12px, #fff 12px 24px);
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 400 17px/1.6 "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-stretch: 100%; }
+  a { color: var(--ink); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+  a:hover { text-decoration-thickness: 2px; }
+  :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; border-radius: 4px; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+  .band { height: 10px; background: var(--stripes); }
+
+  /* Top bar */
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 0; }
+  .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 800; font-size: 19px; letter-spacing: -.01em; text-decoration: none; }
+  .brand svg { width: 30px; height: 30px; }
+  .top nav { display: flex; gap: 22px; font-size: 15px; }
+
+  /* Hero */
+  .hero { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: 56px; align-items: center; padding: 40px 0 72px; }
+  h1, h2, h3 { font-stretch: 75%; font-weight: 800; letter-spacing: -.01em; line-height: 1.02; margin: 0; }
+  h1 { font-size: clamp(44px, 7vw, 78px); }
+  .lede { font-size: 20px; line-height: 1.55; color: var(--ink2); max-width: 34em; margin: 22px 0 30px; }
+  .cta { display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: center; }
+  .btn { display: inline-flex; align-items: center; gap: 10px; font: 700 17px/1 "Archivo", system-ui, sans-serif; padding: 15px 22px;
+    border-radius: 8px; border: 2px solid var(--ink); background: var(--ink); color: #fff; text-decoration: none; cursor: pointer; }
+  .btn:hover { background: var(--ink2); text-decoration: none; }
+  .btn.ghost { background: var(--paper); color: var(--ink); }
+  .btn.ghost:hover { background: var(--mist); }
+  .btn.tape { background: var(--tape); border-color: var(--ink); color: var(--ink); }
+  .btn.tape:hover { background: #ffd84f; }
+  .shot { margin: 0; justify-self: center; }
+  .shot img { display: block; width: 100%; max-width: 368px; height: auto; border-radius: 12px;
+    box-shadow: 0 24px 60px rgba(23, 24, 29, .22), 0 3px 10px rgba(23, 24, 29, .1); }
+  .shot figcaption { font-size: 14px; color: var(--muted); margin-top: 14px; text-align: center; }
+
+  /* Sections */
+  section { padding: 64px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: clamp(34px, 5vw, 52px); margin-bottom: 14px; }
+  .sub { color: var(--muted); margin: 0 0 32px; max-width: 40em; }
+
+  /* Browser picker */
+  .picker { display: inline-flex; gap: 4px; padding: 4px; background: var(--mist); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 28px; }
+  .picker label { position: relative; }
+  .picker input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+  .picker span { display: block; padding: 9px 18px; border-radius: 7px; font-weight: 700; font-size: 15px; }
+  .picker input:checked + span { background: var(--ink); color: #fff; }
+  .picker input:focus-visible + span { outline: 3px solid var(--focus); outline-offset: 2px; }
+  .notice { display: none; border-left: 4px solid var(--tape); background: var(--tape-soft); padding: 12px 16px; border-radius: 6px; margin: 0 0 24px; max-width: 46em; }
+  .notice.show { display: block; }
+
+  /* Steps */
+  ol.steps { list-style: none; margin: 0; padding: 0; counter-reset: step; display: grid; gap: 18px; max-width: 760px; }
+  ol.steps > li { counter-increment: step; position: relative; display: grid; grid-template-columns: 56px 1fr; gap: 18px;
+    padding: 22px 24px 24px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); }
+  ol.steps > li::before { content: counter(step); display: grid; place-items: center; width: 56px; height: 56px; border-radius: 10px;
+    background: var(--ink); color: var(--tape); font: 800 28px/1 "Archivo", system-ui, sans-serif; font-stretch: 75%; }
+  ol.steps > li.done::before { content: "✓"; background: var(--mist); color: var(--muted); }
+  h3 { font-size: 27px; margin: 4px 0 8px; }
+  .steps p { margin: 0 0 14px; }
+  .steps p:last-child { margin-bottom: 0; }
+  .steps .muted, .muted { color: var(--muted); font-size: 15px; }
+  kbd, .path { font: 600 15px/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--mist); border: 1px solid var(--line);
+    border-radius: 5px; padding: 2px 7px; }
+  .copyrow { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+  .copy { font: 600 14px/1 "Archivo", system-ui, sans-serif; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--line2); background: var(--paper); cursor: pointer; }
+  .copy:hover { border-color: var(--ink); }
+  [hidden] { display: none !important; }
+
+  /* Proof */
+  .proof { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; max-width: 900px; }
+  .proof img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 12px; display: block; }
+
+  /* Use */
+  .use { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 44px; max-width: 900px; margin: 0; padding: 0; list-style: none; }
+  .use h3 { font-size: 24px; }
+  .use p { margin: 0; color: var(--ink2); }
+
+  /* Help */
+  .help { max-width: 760px; }
+  .help li { margin-bottom: 10px; }
+  .never { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; list-style: none; padding: 0; margin: 0; max-width: 960px; }
+  .never li { border-top: 4px solid var(--ink); padding-top: 14px; }
+  .never b { display: block; font-size: 19px; margin-bottom: 4px; }
+
+  footer { border-top: 1px solid var(--line); padding: 28px 0 48px; color: var(--muted); font-size: 14px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: space-between; }
+
+  @media (max-width: 820px) {
+    .hero { grid-template-columns: 1fr; gap: 40px; padding-top: 16px; }
+    .use, .never { grid-template-columns: 1fr; }
+    .top nav { display: none; }
+  }
+  @media (max-width: 520px) {
+    body { font-size: 16px; }
+    ol.steps > li { grid-template-columns: 1fr; padding: 18px; }
+    ol.steps > li::before { width: 44px; height: 44px; font-size: 22px; }
+    .picker { display: flex; }
+    .picker label { flex: 1; text-align: center; }
+    .picker span { padding: 9px 6px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+  html { scroll-behavior: smooth; }
+</style>
+</head>
+<body data-browser="chrome">
+<div class="band" aria-hidden="true"></div>
+
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="#" aria-label="Better Checkout, home">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="3.2" width="20" height="5.3" rx="1.4" fill="#17181d"/><path fill="#fff" d="M6.2 3.2h2.9L6.6 8.5H3.7zM12.2 3.2h2.9l-2.5 5.3H9.7zM18.2 3.2h2.9l-2.5 5.3h-2.9z"/><rect x="2" y="10" width="20" height="11.5" rx="2" fill="#17181d"/><path d="M7.6 15.6l2.9 2.8 5.9-5.7" fill="none" stroke="#ffcf33" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Better Checkout
+    </a>
+    <nav aria-label="Page">
+      <a href="#install">Install</a>
+      <a href="#use">How to use it</a>
+      <a href="#help">Help</a>
+    </nav>
+  </header>
+
+  <main>
+    <div class="hero">
+      <div>
+        <h1>Know what's available before you book.</h1>
+        <p class="lede">Better Checkout is a free add-on for MTSU's Connect2 equipment checkout. Pick your dates, see what's available right on the equipment list, save the gear you always take, and book it in a few clicks.</p>
+        <div class="cta">
+          <a class="btn" href="#install">Install it</a>
+          <a href="#use">See how it works</a>
+        </div>
+      </div>
+      <figure class="shot">
+        <img src="img/panel.png" width="368" height="684" alt="The Better Checkout panel: two sets of dates, an equipment preset with three items marked Available or Not available, and a Book both dates button.">
+        <figcaption>The Better Checkout panel, in the corner of Connect2.</figcaption>
+      </figure>
+    </div>
+
+    <section id="install" aria-labelledby="install-h">
+      <h2 id="install-h">Install it</h2>
+      <p class="sub">About two minutes, once per computer. Use a laptop or desktop: add-ons like this don't work on most phones.</p>
+
+      <div class="picker" role="radiogroup" aria-label="Your browser">
+        <label><input type="radio" name="browser" value="chrome" checked><span>Chrome</span></label>
+        <label><input type="radio" name="browser" value="edge"><span>Edge</span></label>
+        <label><input type="radio" name="browser" value="firefox"><span>Firefox</span></label>
+      </div>
+      <p class="notice" id="safari-note">Safari isn't supported. Use Chrome, Edge, or Firefox for Connect2 and follow the steps for that browser.</p>
+
+      <ol class="steps">
+        <li>
+          <div>
+            <h3>Add Tampermonkey</h3>
+            <p>Tampermonkey is a free, widely used extension that runs small add-ons like Better Checkout.</p>
+            <p>
+              <a class="btn ghost" data-for="chrome" href="https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo" target="_blank" rel="noopener">Get Tampermonkey for Chrome</a>
+              <a class="btn ghost" data-for="edge" href="https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd" target="_blank" rel="noopener">Get Tampermonkey for Edge</a>
+              <a class="btn ghost" data-for="firefox" href="https://addons.mozilla.org/firefox/addon/tampermonkey/" target="_blank" rel="noopener">Get Tampermonkey for Firefox</a>
+            </p>
+            <p class="muted">On that page, click <b data-for="chrome">Add to Chrome</b><b data-for="edge">Get</b><b data-for="firefox">Add to Firefox</b>, then confirm.</p>
+          </div>
+        </li>
+
+        <li data-for="chrome edge" class="permission">
+          <div>
+            <h3>Let Tampermonkey run add-ons</h3>
+            <div data-for="chrome">
+              <p>Chrome asks you to switch this on once. Right-click the Tampermonkey icon in your toolbar (it may be inside the puzzle-piece menu), choose <b>Manage extension</b>, and turn on <b>Allow User Scripts</b>.</p>
+              <p class="muted">Skipping this is the most common reason nothing shows up.</p>
+            </div>
+            <div data-for="edge">
+              <p>Edge asks you to switch this on once. Copy this address into a new tab, then turn on <b>Developer mode</b>.</p>
+              <div class="copyrow"><span class="path">edge://extensions</span><button class="copy" type="button" data-copy="edge://extensions">Copy</button></div>
+              <p class="muted">Skipping this is the most common reason nothing shows up.</p>
+            </div>
+          </div>
+        </li>
+
+        <li>
+          <div>
+            <h3>Install Better Checkout</h3>
+            <p>Tampermonkey opens a page about Better Checkout. Click <b>Install</b> on it.</p>
+            <p><a class="btn tape" id="install-link" href="https://raw.githubusercontent.com/nathanmontalvoGM/Better-Equipment-Reservation/main/src/better-checkout.user.js">Install Better Checkout</a></p>
+            <p class="muted">If you just see a page of code instead, Tampermonkey isn't installed or switched on yet. Go back a step.</p>
+          </div>
+        </li>
+
+        <li>
+          <div>
+            <h3>Open Connect2</h3>
+            <p>Sign in to <a href="https://mtsu.getconnect2.com/" target="_blank" rel="noopener">Connect2</a>, then go to <b>Book by Category → Media Arts Equipment</b>. Better Checkout appears in the bottom-right corner, with a bar above the equipment list:</p>
+            <img src="img/list.png" width="876" height="622" alt="Connect2's equipment list with Better Checkout's bar above it: a switch labelled Only show gear that's available, and items marked Available for your dates or Available for only part of your dates." style="width:100%;height:auto;border:1px solid var(--line);border-radius:10px;display:block">
+            <p class="muted" style="margin-top:14px">Updates install themselves.</p>
+          </div>
+        </li>
+      </ol>
+    </section>
+
+    <section id="use" aria-labelledby="use-h">
+      <h2 id="use-h">How to use it</h2>
+      <p class="sub">Everything Better Checkout adds to Connect2 has its slate logo, so you can always tell what's Connect2 and what's the add-on.</p>
+      <ul class="use">
+        <li><h3>Pick your dates</h3><p>Press <b>Pick your dates</b> above the equipment list and set when you'll pick up and return the gear.</p></li>
+        <li><h3>See what's available</h3><p>Every item says whether it's available for your dates. Turn on <b>Only show gear that's available</b> to hide the rest.</p></li>
+        <li><h3>Save your usual gear</h3><p>In the panel, choose <b>New preset</b>, then press <b>+ Preset</b> under each item you take. Add backups for anything that might be taken.</p></li>
+        <li><h3>Book it</h3><p>Press <b>Book these dates</b>. Better Checkout adds your gear and fills in the times, then stops at Terms &amp; Conditions so you finish the booking yourself.</p></li>
+      </ul>
+    </section>
+
+    <section id="help" aria-labelledby="help-h">
+      <h2 id="help-h">Not working?</h2>
+      <ol class="help">
+        <li>Make sure you're on <b>Book by Category → Media Arts Equipment</b>, not Connect2's home page, and reload it.</li>
+        <li>Open Tampermonkey's dashboard (click its icon) and check that <b>Better Checkout</b> is listed and switched on.</li>
+        <li><span data-for="chrome">In Chrome, check that <b>Allow User Scripts</b> is still on (step 2).</span><span data-for="edge">In Edge, check that <b>Developer mode</b> is still on (step 2).</span><span data-for="firefox">In Firefox, check that Tampermonkey is enabled under <b>Add-ons and themes</b>.</span></li>
+        <li>Still stuck, or something looks wrong? In the panel, open <b>Share and Help</b>, press <b>Copy problem report</b>, and send it to whoever shared Better Checkout with you. It never includes your name or login.</li>
+      </ol>
+
+      <h3 style="margin-top:44px">What it never does</h3>
+      <ul class="never" style="margin-top:18px">
+        <li><b>See your password</b>It works inside the Connect2 tab you're already signed in to.</li>
+        <li><b>Book without you</b>It stops at Terms &amp; Conditions. You accept, verify, and complete every booking.</li>
+        <li><b>Send your data anywhere</b>Your presets and dates stay in your browser. It only talks to Connect2.</li>
+      </ul>
+    </section>
+  </main>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Better Checkout is an unofficial tool made by an MTSU student. It isn't made or supported by MTSU or by Connect2's maker, Lorensbergs.</span>
+    <a href="https://github.com/nathanmontalvoGM/Better-Equipment-Reservation">Source on GitHub</a>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var ua = navigator.userAgent;
+    var guess = /Edg\//.test(ua) ? 'edge' : /Firefox\//.test(ua) ? 'firefox' : /Chrome\//.test(ua) ? 'chrome' : /Safari\//.test(ua) ? 'safari' : 'chrome';
+    function pick(b) {
+      document.body.setAttribute('data-browser', b);
+      document.querySelectorAll('[data-for]').forEach(function (el) { el.hidden = el.getAttribute('data-for').split(' ').indexOf(b) < 0; });
+      var r = document.querySelector('.picker input[value="' + b + '"]');
+      if (r) r.checked = true;
+    }
+    if (guess === 'safari') { document.getElementById('safari-note').classList.add('show'); pick('chrome'); } else { pick(guess); }
+    document.querySelectorAll('.picker input').forEach(function (r) {
+      r.addEventListener('change', function () { pick(r.value); });
+    });
+    document.querySelectorAll('[data-copy]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var t = b.getAttribute('data-copy');
+        var done = function () { b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy'; }, 1600); };
+        if (navigator.clipboard) navigator.clipboard.writeText(t).then(done, function () {}); else done();
+      });
+    });
+  })();
+</script>
+</body>
+</html>
