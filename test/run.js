@@ -54,8 +54,17 @@ function fakeFetch(booked, limits, calls) {
     }
     const lim = limits[id] || {};
     const start = params.get('start'), end = params.get('end');
+    if (lim.partial && !(start === lim.partial[0] && end === lim.partial[2])) { // asked for more than the free part
+      // [startMdy, startTime, endMdy, endTime], e.g. ['11/06/2030', '8:00 AM', '11/07/2030', '12:00 PM']
+      const [ps, pst, pe, pet] = lim.partial;
+      const short = (mdyText) => longDate(mdyText).replace(/^(\w{3})\w*, (\d+) (\w+) \d+$/, '$1, $2 $3');
+      return { ok: true, json: async () => ({ Type: 2, TypeName: 'warning', Title: 'Limited availability',
+        Text: `A shorter booking is available from ${short(ps)} (${pst}) - ${short(pe)} (${pet})`,
+        List: ['Collect from: ' + pst, longDate(ps), 'Return by: ' + pet, longDate(pe)] }) };
+    }
     // Defaults are wide on purpose: only tests that set `limits` run into time limits.
-    const list = start ? ['Collect from: ' + (lim.collect || '7:00 AM'), longDate(start), 'Return by: ' + (lim.ret || '11:00 PM'), longDate(end)] : [];
+    const collectAt = lim.partial ? lim.partial[1] : lim.collect, returnBy = lim.partial ? lim.partial[3] : lim.ret; // asked for exactly the free part
+    const list = start ? ['Collect from: ' + (collectAt || '7:00 AM'), longDate(start), 'Return by: ' + (returnBy || '11:00 PM'), longDate(end)] : [];
     return { ok: true, json: async () => ({ Type: 3, TypeName: 'success', Title: 'Available', Text: '', List: list }) };
   };
 }
@@ -179,35 +188,67 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   check(/No dates were set/.test(s1), 'summary explains alternates weren\'t date-checked');
   check(p.get('queue') === null && p.postbacks.length === 0, 'queue is cleared and nothing else is clicked');
 
-  console.log('Adding with dates: picks a free unit');
+  console.log('Connect2\'s own Availability box');
   resetStorage();
   storage['c2presets.presets'] = JSON.stringify({ Lights: { category: 'Media Arts Equipment', slots: [
     { options: [{ id: ID.arri1, name: 'Arri Softbank 1x650w 2x150w Three Light Kit #1 DD4' }, { id: ID.arri3, name: 'Arri Softbank 1x650W 2x150W 3 Light Kit #3 DD4' }] },
   ] } });
   storage['c2presets.ui'] = JSON.stringify({ current: 'Lights', open: true });
   p = loadPage({ edit: withDates, booked: [ID.arri1] });
-  check(p.button('Add to basket').title.includes('10/20/2026 09:00 → 10/22/2026 17:00'), 'falls back to the dates in Connect2\'s own Availability box');
-  p.button('Add to basket').click();
+  const c2box = () => p.w.document.querySelector('[id$="availabilitySearch_availabilitySetup"]');
+  const note = () => p.w.document.querySelector('.c2p-availnote');
+  check(c2box().style.display === 'none' && c2box().nextElementSibling === note(),
+    'its date-only box is hidden, with the helper\'s box in its place');
+  check(JSON.stringify(p.get('schedule').ranges) === JSON.stringify([{ startDate: '2026-10-20', startTime: '09:00', endDate: '2026-10-22', endTime: '17:00' }]) && p.get('ui').activeRange === 0,
+    'dates already set there are carried over and selected');
+  check(p.status().includes('Using the dates from Connect2\'s Availability box: Tue 10/20 9 AM → Thu 10/22 5 PM'), 'and it says so');
+  check(note().textContent.includes('Showing what\'s free Tue 10/20 9 AM → Thu 10/22 5 PM') && !!note().querySelector('.c2p-changedates'), 'the new box shows the dates with "Change dates"');
+  check(p.w.document.body.classList.contains('c2p-own-avail'), 'and Connect2\'s own markers on the list are hidden, so they can\'t contradict the helper');
+  p.button('or just add to basket').click();
   await until(() => p.postbacks.length);
-  check(/ctl11_bookBtn$/.test(p.postbacks[0] || ''), 'Kit #1 is booked, so it clicks Kit #3 instead');
+  check(/ctl11_bookBtn$/.test(p.postbacks[0] || ''), 'adding uses those dates: Kit #1 is booked, so it picks Kit #3');
   p.save();
   p = loadPage({ edit: both(withDates, withBasket(1)), booked: [ID.arri1] }); await wait();
   const s2 = p.status();
   check(/Added 1 of 1/.test(s2) && /used Arri Softbank 1x650W 2x150W 3 Light Kit #3 DD4 instead of .*Kit #1/.test(s2), 'summary reports the swap');
   check(!/No dates were set/.test(s2), 'no missing-dates note when dates were set');
+  p.root.querySelectorAll('.range')[0].querySelector('.x').click();
+  p.save();
+  p = loadPage({ edit: withDates });
+  check(p.get('schedule').ranges.length === 0, 'they\'re carried over only once: delete them and they stay deleted');
+  note().querySelector('.c2p-changedates').click();
+  check(p.get('schedule').ranges.length === 1 && p.get('ui').editRange === 0, '"Pick your dates" in that box adds dates in the panel');
 
-  console.log('Checking availability');
+  console.log('Free for only part of your dates');
   resetStorage();
-  storage['c2presets.presets'] = JSON.stringify({ Lights: { category: 'Media Arts Equipment', slots: [
-    { options: [{ id: ID.arri1, name: 'Arri Kit #1' }, { id: ID.arri3, name: 'Arri Kit #3' }] },
-    { options: [{ id: ID.tripod, name: '3 Pod V4AH Tripod' }] },
+  // Tue 11/5/2030 9 AM → Thu 11/7 4:30 PM. The fog machine is free only Wed 11/6 8 AM → Thu 11/7 12 PM;
+  // the tripod can't be collected until 10 AM Tue.
+  const partLimits = { [ID.fog]: { partial: ['11/06/2030', '8:00 AM', '11/07/2030', '12:00 PM'] }, [ID.tripod]: { collect: '10:00 AM' } };
+  storage['c2presets.presets'] = JSON.stringify({ Kit: { category: 'Media Arts Equipment', slots: [
+    { options: [{ id: ID.fog, name: 'Antari Z-Stream 1000W Fog Machine B1' }] },
   ] } });
-  storage['c2presets.ui'] = JSON.stringify({ current: 'Lights', open: true });
-  p = loadPage({ edit: withDates, booked: [ID.arri1, ID.arri3] });
-  await until(() => p.root.querySelectorAll('li.slot .badge:not(.pending)').length === 3);
-  const badges = [...p.root.querySelectorAll('li.slot .badge')].map((b) => b.textContent);
-  check(badges.join() === 'Not available,Not available,Available', 'checks the preset by itself and shows a badge for each unit');
-  check(p.fetches.length === 3, 'only the preset\'s units: Connect2 marks the list itself for its own dates');
+  storage['c2presets.ui'] = JSON.stringify({ current: 'Kit', open: true });
+  storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2030-11-05', startTime: '09:00', endDate: '2030-11-07', endTime: '16:30' }] });
+  p = loadPage({ limits: partLimits });
+  await until(() => p.w.document.querySelector('.c2p-avail') && !p.w.document.querySelector('.c2p-avail-pending') && !p.root.querySelector('.badge.pending'), 8000);
+  const itemLi = (id) => p.w.document.querySelector(`.resource-availability[data-id="${id}"]`).closest('li');
+  const fogBadge = itemLi(ID.fog).querySelector('.c2p-avail').textContent;
+  check(fogBadge.startsWith('⚠ Free for only part of your dates') && fogBadge.includes('Free Wed 11/6 8 AM → Thu 11/7 12 PM') && !/shorter booking|collect from/i.test(fogBadge),
+    'on the list: says once, plainly, when it is free (' + fogBadge + ')');
+  check(!!itemLi(ID.fog).querySelector('.c2p-freepart button') && itemLi(ID.fog).querySelector('.c2p-freepart button').textContent === 'Use these dates', 'with "Use these dates"');
+  check(itemLi(ID.tripod).querySelector('.c2p-avail').textContent.includes('Free Tue 11/5 10 AM → Thu 11/7 4:30 PM'), 'items free from a later pickup time get the same offer');
+  const fogSlot = p.root.querySelector('li.slot').textContent;
+  check(fogSlot.includes('Part of the time') && fogSlot.includes('Free Wed 11/6 8 AM → Thu 11/7 12 PM') && !!p.button('Use these dates'), 'and in the preset');
+  check(!![...p.root.querySelectorAll('button')].find((b) => b.textContent === 'Fit times: Wed 11/6 8 AM → Thu 11/7 12 PM'), 'Fit times uses it too');
+  itemLi(ID.fog).querySelector('.c2p-freepart button').click();
+  check(JSON.stringify(p.get('schedule').ranges[0]) === JSON.stringify({ startDate: '2030-11-06', startTime: '08:00', endDate: '2030-11-07', endTime: '12:00' }),
+    'pressing it changes your selected dates to those');
+  check(p.status().includes('Your dates are now Wed 11/6 8 AM → Thu 11/7 12 PM (they were Tue 11/5 9 AM → Thu 11/7 4:30 PM).') && !!p.button('Undo'), 'and says what changed, with Undo');
+  await until(() => itemLi(ID.fog).querySelector('.c2p-avail-ok'), 8000);
+  check(itemLi(ID.fog).querySelector('.c2p-avail').textContent === '✓ Free for your dates', 'now it\'s free for your dates');
+  p.button('Undo').click();
+  check(p.get('schedule').ranges[0].startDate === '2030-11-05' && p.get('schedule').ranges[0].startTime === '09:00' && p.status().includes('Your dates are back to Tue 11/5 9 AM → Thu 11/7 4:30 PM'),
+    'Undo puts them back');
 
   console.log('Date ranges → bookings');
   resetStorage();
@@ -509,8 +550,8 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   setInput(dateInput(0, 0), '2030-10-28');
   check(JSON.stringify(p.get('schedule').ranges) === JSON.stringify([{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-28', endTime: '16:30' }]),
     'new dates start as a 9:00 AM to 4:30 PM day, and the return date follows the pickup date');
-  const badgeOf = (id) => {
-    const b = p.w.document.querySelector(`.resource-availability[data-id="${id}"]`).closest('li').querySelector('.c2p-avail');
+  const badgeOf = (id) => { // the badge itself, without the line under it
+    const b = p.w.document.querySelector(`.resource-availability[data-id="${id}"]`).closest('li').querySelector('.c2p-avail > span');
     return b ? b.textContent : null;
   };
   await until(() => p.w.document.querySelector('.c2p-avail') && !p.w.document.querySelector('.c2p-avail-pending'), 8000);

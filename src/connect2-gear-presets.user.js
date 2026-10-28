@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Connect2 Gear Presets (MTSU)
 // @namespace    nathan.c2presets
-// @version      0.10.0
+// @version      0.11.0
 // @description  Gear presets for MTSU's Connect2 checkout: add a whole preset to your basket in one click, check its availability, and book it for several date ranges.
 // @homepageURL  https://github.com/nathanmontalvoGM/Better-Equipment-Reservation
 // @downloadURL  https://raw.githubusercontent.com/nathanmontalvoGM/Better-Equipment-Reservation/main/src/connect2-gear-presets.user.js
@@ -32,6 +32,8 @@
  * - Dates: one list of pickup → return windows. The selected one shows next to every item on
  *   the equipment list whether it's free then; presets use it too; Book books them all.
  * - "Only show gear that's free": a switch above Connect2's list hides what isn't free then.
+ * - Items free for only part of your dates say when they are free, with "Use these dates".
+ * - Connect2's own date-only Availability box is replaced by the helper's dates (one place to set them).
  * - Share links: a link that adds a preset for anyone with the script installed.
  * - Runs notice Connect2's Complete page: they end after the last booking, or offer the next one.
  * - Copy problem report: what the script did and found, for fixing it (never your name or login).
@@ -113,7 +115,9 @@
 
   const savePresets = () => store.set('presets', presets);
   const saveUi = () => store.set('ui', ui);
-  const setStatus = (t) => { statusText = t; store.set('lastStatus', t); render(); };
+  // An optional undo shows as a button next to the message, until the next message.
+  let statusUndo = null;
+  const setStatus = (t, undo) => { statusText = t; statusUndo = undo || null; store.set('lastStatus', t); render(); };
 
   function findOption(p, id) {
     for (let si = 0; si < p.slots.length; si++) {
@@ -257,11 +261,17 @@
         const collect = limit('collect from'), ret = limit('return by');
         const limits = [collect && 'collect from ' + time12(collect.time) + (collect.date ? ' ' + shortDay(collect.date) : ''),
           ret && 'return by ' + time12(ret.time) + (ret.date ? ' ' + shortDay(ret.date) : '')].filter(Boolean).join(', ');
+        const kind = data.TypeName === 'error' ? 'bad' : data.TypeName === 'warning' ? 'limited' : 'ok';
+        // "Only partly free": Connect2 says "A shorter booking is available from Wed, 4 Nov (8:00 AM) -
+        // Thu, 5 Nov (12:00 PM)", and its collect/return times are that shorter booking (with years).
+        const shorter = kind === 'limited' ? (collect && ret && collect.date && ret.date
+          ? { startDate: collect.date, startTime: collect.time, endDate: ret.date, endTime: ret.time }
+          : parseShorter(stripHtml(data.Text), d)) : null;
         result = {
           label: data.Title || data.TypeName || '?',
-          kind: data.TypeName === 'error' ? 'bad' : data.TypeName === 'warning' ? 'limited' : 'ok',
-          detail: [stripHtml(data.Text), limits].filter(Boolean).join(' · '),
-          collect, ret,
+          kind,
+          detail: shorter ? 'Free only ' + shortLabel(shorter) : [stripHtml(data.Text), limits].filter(Boolean).join(' · '),
+          collect, ret, shorter,
         };
       } else {
         result = {
@@ -288,7 +298,10 @@
   // Returns { kind: 'ok'|'hours'|'limited'|'bad'|'unknown', why }.
   function fitFor(r, b) {
     if (!r) return { kind: 'unknown', why: 'not checked' };
-    if (r.kind !== 'ok') return { kind: r.kind, why: r.kind === 'unknown' ? 'couldn\'t check' : r.kind === 'limited' ? 'only partly free' : 'not free' };
+    if (r.kind !== 'ok') {
+      return { kind: r.kind, why: r.kind === 'unknown' ? 'couldn\'t check'
+        : r.kind === 'limited' ? (r.shorter ? 'only free ' + shortLabel(r.shorter) : 'only partly free') : 'not free' };
+    }
     if (!b || !b.startTime) return { kind: 'ok', why: '' };
     const problems = [];
     if (r.collect && minutesAt(b.startDate, b.startTime) < minutesAt(r.collect.date || b.startDate, r.collect.time)) {
@@ -353,6 +366,24 @@
     const m = String(t || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}:\d{2}\s*[AP]\.?M)/i);
     return m ? { date: m[3] + '-' + pad(m[1]) + '-' + pad(m[2]), time: parseTime12(m[4]) } : null;
   }
+  // "…from Wed, 4 Nov (8:00 AM) - Thu, 5 Nov (12:00 PM)" → a range; the year comes from the dates asked about.
+  function parseShorter(text, d) {
+    const part = '(?:[A-Za-z]{3,9},?\\s+)?(\\d{1,2})\\s+([A-Za-z]{3})[a-z]*\\.?(?:\\s+(\\d{4}))?\\s*\\(?(\\d{1,2}:\\d{2}\\s*[AP]\\.?M)\\)?';
+    const m = String(text || '').match(new RegExp('from\\s+' + part + '\\s*[-–]\\s*' + part, 'i'));
+    if (!m) return null;
+    const baseYear = Number(((d && d.start) || '').slice(-4)) || new Date().getFullYear();
+    const ymd = (day, mon, year) => {
+      const mo = MONTHS[mon.toLowerCase()];
+      if (!mo) return null;
+      let y = Number(year) || baseYear;
+      if (!year && d && d.start && mo < Number(d.start.slice(0, 2)) - 6) y += 1; // asked in Dec, free in Jan
+      return y + '-' + pad(mo) + '-' + pad(day);
+    };
+    const startDate = ymd(m[1], m[2], m[3]), endDate = ymd(m[5], m[6], m[7]);
+    const startTime = parseTime12(m[4]), endTime = parseTime12(m[8]);
+    return startDate && endDate && startTime && endTime ? { startDate, startTime, endDate, endTime } : null;
+  }
+
   // Does a date box's "10/26/2026" (or "11/2/2026") mean this YYYY-MM-DD?
   function sameMdy(text, ymd) {
     const m = String(text || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
@@ -493,6 +524,25 @@
   const laterOf = (a, b) => (minutesAt(a.date, a.time) >= minutesAt(b.date, b.time) ? a : b);
   const earlierOf = (a, b) => (minutesAt(a.date, a.time) <= minutesAt(b.date, b.time) ? a : b);
 
+  // The part of booking b this unit is free for, when it's free for only part of it (or null).
+  function freePart(r, b) {
+    if (!r || !b) return null;
+    let st = { date: b.startDate, time: b.startTime };
+    let en = { date: b.endDate, time: b.endTime };
+    if (r.kind === 'limited') {
+      if (!r.shorter) return null;
+      st = laterOf(st, { date: r.shorter.startDate, time: r.shorter.startTime });
+      en = earlierOf(en, { date: r.shorter.endDate, time: r.shorter.endTime });
+    } else if (fitFor(r, b).kind === 'hours') {
+      if (r.collect) st = laterOf(st, { date: r.collect.date || b.startDate, time: r.collect.time });
+      if (r.ret) en = earlierOf(en, { date: r.ret.date || b.endDate, time: r.ret.time });
+    } else {
+      return null;
+    }
+    return minutesAt(en.date, en.time) > minutesAt(st.date, st.time)
+      ? { startDate: st.date, startTime: st.time, endDate: en.date, endTime: en.time } : null;
+  }
+
   // From availability already checked: which preset slots have no unit that fits booking b, and
   // narrower times that would fit them all when only the times are the problem. Unchecked slots are skipped.
   function rangeProblems(p, b) {
@@ -507,13 +557,14 @@
       if (units.some((u) => u.f.kind === 'ok') || units.every((u) => !u.r)) continue;
       issues.push(slot.options[0].name + ': ' + units[0].f.why + (units.length > 1 ? ' (alternates too)' : ''));
       problemSlots.push({ si, text: issues[issues.length - 1] });
-      // A time-only problem can be fixed by narrowing the booking to the unit with the most room.
+      // When units are free for part of the time, narrow the booking to the unit with the most room.
       let best = null;
-      for (const u of units.filter((x) => x.f.kind === 'hours')) {
-        const st = u.r.collect ? laterOf({ date: b.startDate, time: b.startTime }, { date: u.r.collect.date || b.startDate, time: u.r.collect.time }) : { date: b.startDate, time: b.startTime };
-        const en = u.r.ret ? earlierOf({ date: b.endDate, time: b.endTime }, { date: u.r.ret.date || b.endDate, time: u.r.ret.time }) : { date: b.endDate, time: b.endTime };
+      for (const u of units) {
+        const fp = freePart(u.r, b);
+        if (!fp) continue;
+        const st = { date: fp.startDate, time: fp.startTime }, en = { date: fp.endDate, time: fp.endTime };
         const room = minutesAt(en.date, en.time) - minutesAt(st.date, st.time);
-        if (room > 0 && (!best || room > best.room)) best = { st, en, room };
+        if (!best || room > best.room) best = { st, en, room };
       }
       if (!best) { fixable = false; continue; }
       start = laterOf(start, best.st);
@@ -544,8 +595,9 @@
     if (!r) return { text: 'Checking…', kind: 'pending', detail: '' };
     const f = fitFor(r, ab);
     if (f.kind === 'ok') return { text: '✓ Free for your dates', kind: 'ok', detail: '' };
-    if (f.kind === 'hours') return { text: '⚠ ' + cap(f.why), kind: 'limited', detail: '' };
-    if (f.kind === 'limited') return { text: '⚠ Only partly free', kind: 'limited', detail: r.detail };
+    const part = freePart(r, ab);
+    if (f.kind === 'hours') return { text: '⚠ ' + cap(f.why), kind: 'limited', detail: '', part };
+    if (f.kind === 'limited') return { text: '⚠ Free for only part of your dates', kind: 'limited', detail: part ? '' : r.detail, part };
     if (f.kind === 'unknown') return { text: '? Couldn\'t check', kind: 'unknown', detail: r.detail };
     return { text: '✗ Not free for your dates', kind: 'bad', detail: r.detail };
   }
@@ -579,10 +631,110 @@
           det.style.cssText = 'margin-top:2px;font-size:12px;color:#555;';
           box.appendChild(det);
         }
+        if (bd.part) box.appendChild(freePartLine(bd.part));
         (it.li.querySelector('.resource-other') || it.li).appendChild(box);
       }
     }
     decorateFilterBar();
+  }
+
+  // "Free Wed 11/4 8 AM → Thu 11/5 12 PM  [Use these dates]", under an item on the list.
+  function freePartLine(part) {
+    const row = document.createElement('div');
+    row.className = 'c2p-freepart';
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px;font-size:13px;color:#374151;';
+    const t = document.createElement('span');
+    t.textContent = 'Free ' + shortLabel(part);
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = 'Use these dates';
+    b.title = 'Change your selected dates to ' + bookingLabel(part);
+    b.style.cssText = 'font:inherit;font-size:12px;padding:2px 10px;border-radius:6px;border:1px solid #2563eb;background:#fff;color:#2563eb;cursor:pointer;';
+    b.addEventListener('click', (e) => { e.preventDefault(); useDates(part); });
+    row.append(t, b);
+    return row;
+  }
+
+  // Switch the selected dates to `range` (or add it, when no dates are set), with Undo.
+  function useDates(range) {
+    const i = activeIndex();
+    const next = { startDate: range.startDate, startTime: range.startTime, endDate: range.endDate, endTime: range.endTime };
+    if (i < 0) {
+      schedule.ranges.push(next);
+      ui.activeRange = schedule.ranges.length - 1;
+      saveSchedule(); saveUi();
+      log('dates', 'added ' + bookingLabel(next));
+      return setStatus('Your dates are now ' + shortLabel(next) + '.');
+    }
+    const prev = Object.assign({}, schedule.ranges[i]);
+    Object.assign(schedule.ranges[i], next);
+    saveSchedule();
+    log('dates', 'changed ' + bookingLabel(prev) + ' to ' + bookingLabel(next));
+    setStatus('Your dates are now ' + shortLabel(next) + ' (they were ' + shortLabel(prev) + ').', () => {
+      if (!schedule.ranges[i]) return;
+      Object.assign(schedule.ranges[i], prev);
+      saveSchedule();
+      log('dates', 'undid the change');
+      setStatus('Your dates are back to ' + shortLabel(prev) + '.');
+    });
+  }
+
+  // ---------- Connect2's own Availability box ----------
+  // It's a second, date-only way to set dates, and it adds its own markers to the list. The helper
+  // takes its place: the box is hidden, a small box shows the helper's dates, and dates already set
+  // there are carried over once.
+  function adoptConnect2Dates() {
+    const pd = pageDates();
+    if (!pd || schedule.ranges.length || store.get('adoptedC2', '') === pd.label) return;
+    store.set('adoptedC2', pd.label);
+    const part = (t) => {
+      const m = String(t || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/);
+      return m ? { date: m[3] + '-' + pad(m[1]) + '-' + pad(m[2]), time: m[4] ? pad(m[4]) + ':' + m[5] : null } : null;
+    };
+    const st = part(pd.kind === 'range' ? pd.start : pd.date), en = part(pd.kind === 'range' ? pd.end : pd.date);
+    if (!st || !en) return;
+    const r = { startDate: st.date, startTime: st.time || '09:00', endDate: en.date, endTime: en.time || '16:30' };
+    if (!rangeOk(r)) return;
+    schedule.ranges.push(r);
+    ui.activeRange = schedule.ranges.length - 1;
+    saveSchedule(); saveUi();
+    log('dates', 'carried over Connect2 Availability dates ' + pd.label);
+    statusText = 'Using the dates from Connect2\'s Availability box: ' + shortLabel(r) + '. You can change them in the Dates section.';
+    store.set('lastStatus', statusText);
+  }
+
+  function takeOverAvailabilityBox() {
+    if (!qs('#c2p-own-avail-style')) {
+      const st = document.createElement('style');
+      st.id = 'c2p-own-avail-style';
+      st.textContent = 'body.c2p-own-avail .resource-availability{display:none!important}';
+      document.head.appendChild(st);
+    }
+    document.body.classList.add('c2p-own-avail'); // Connect2's own per-item markers would contradict the helper's
+    const box = qs('[id$="availabilitySearch_availabilitySetup"]');
+    if (!box) return;
+    box.style.display = 'none';
+    let note = qs('.c2p-availnote');
+    if (!note) {
+      note = document.createElement('div');
+      note.className = 'c2p-availnote searchContent withBorder';
+      box.parentNode.insertBefore(note, box.nextSibling);
+    }
+    note.textContent = '';
+    note.style.cssText = 'display:flex;flex-direction:column;gap:6px;align-items:flex-start;';
+    const label = document.createElement('label');
+    label.textContent = 'Availability';
+    const ab = activeBooking();
+    const txt = document.createElement('div');
+    txt.style.cssText = 'font-size:14px;';
+    txt.textContent = ab ? 'Showing what\'s free ' + shortLabel(ab) + '.' : 'Pick your dates to see what\'s free.';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'c2p-changedates';
+    btn.textContent = ab ? 'Change dates' : 'Pick your dates';
+    btn.style.cssText = 'font:inherit;font-size:13px;padding:4px 12px;border-radius:6px;border:1px solid #2563eb;background:#fff;color:#2563eb;cursor:pointer;';
+    btn.addEventListener('click', (e) => { e.preventDefault(); pickDatesFromBar(); });
+    note.append(label, txt, btn);
   }
 
   // ---------- "Only show gear that's free" switch above Connect2's list ----------
@@ -1551,6 +1703,7 @@
     .bad { background: #fee2e2; color: #991b1b; } .unknown { background: #e5e7eb; color: #374151; } .pending { background: #f3f4f6; color: #6b7280; }
 
     .warn { width: 100%; color: #92400e; font-size: 12px; }
+    .freepart { width: 100%; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: 12px; color: #374151; }
     .detail { width: 100%; color: #4b5563; font-size: 11px; }
     .muted { color: #6b7280; font-size: 12px; }
     .okline { color: #166534; font-size: 12px; }
@@ -1684,14 +1837,17 @@
       const a = act ? availFor(act.d, o.id) : null;
       const f = a && act.booking ? fitFor(a, act.booking) : null;
       const kind = !a ? (ab ? 'pending' : null) : f ? (f.kind === 'hours' ? 'limited' : f.kind) : a.kind;
-      const label = !a ? 'Checking…' : f && f.kind === 'hours' ? cap(f.why) : a.label;
+      const part = a && ab ? freePart(a, ab) : null;
+      const label = !a ? 'Checking…' : f && f.kind === 'hours' ? cap(f.why) : part ? 'Part of the time' : a.label;
       return el('div', { class: 'opt' + (oi ? ' alt' : '') },
         oi ? el('span', { class: 'or' }, 'or') : null,
         el('span', { class: 'nm' }, o.name),
         kind ? el('span', { class: 'badge ' + kind, title: a ? a.detail || '' : '' }, label) : null,
         editing && slot.options.length > 1 ? el('button', { class: 'x', title: 'Remove this unit', onclick: () => removeOption(si, oi) }, '×') : null,
         o.note && WARN_RE.test(o.note) ? el('div', { class: 'warn' }, '⚠ ' + o.note) : null,
-        a && kind !== 'ok' && a.detail && !(f && f.kind === 'hours') ? el('div', { class: 'detail' }, a.detail) : null);
+        part ? el('div', { class: 'freepart' }, 'Free ' + shortLabel(part),
+          el('button', { class: 'link', title: 'Change your selected dates to ' + bookingLabel(part), onclick: () => useDates(part) }, 'Use these dates')) : null,
+        a && kind !== 'ok' && a.detail && !part && !(f && f.kind === 'hours') ? el('div', { class: 'detail' }, a.detail) : null);
     });
     // Nothing in this slot is free for the selected dates: offer something similar.
     const units = ab ? slot.options.map((o) => fitFor(availFor(act.d, o.id), ab)) : [];
@@ -1886,6 +2042,7 @@
           queue ? el('div', { class: 'row' },
             el('button', { class: 'mini', onclick: () => runQueue(true) }, 'Resume'),
             el('button', { class: 'mini', onclick: stopQueue }, 'Stop')) : null,
+          statusUndo && !queue ? el('div', { class: 'row' }, el('button', { class: 'mini', onclick: () => statusUndo() }, 'Undo')) : null,
           !queue ? el('button', { class: 'x close', title: 'Dismiss', onclick: () => setStatus('') }, '×') : null));
       }
 
@@ -1899,6 +2056,7 @@
 
   // Availability badges, and (while picking) preset buttons under Connect2's own Add buttons.
   function decorateList() {
+    takeOverAvailabilityBox();
     decorateBadges();
     qsa('.c2p-under').forEach((b) => b.remove());
     const p = presets[ui.current];
@@ -1940,6 +2098,7 @@
   }
 
   recordCatalog();
+  adoptConnect2Dates();
   log('page', 'opened' + (pageKind() === 'list' ? ': ' + qsa('li.resource-list-item').length + ' items, ' + pageItems().length + ' recognized' : '') + ' · script ' + VERSION);
   render();
   importFromLink();

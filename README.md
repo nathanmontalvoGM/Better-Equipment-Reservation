@@ -29,10 +29,11 @@ The times you need gear, as a list of pickup → return windows (date and time).
 
 - **+ Add dates** adds a window. A new one starts the day after the last return, with the same length and times. **Edit** opens its pickup and return fields; moving the pickup date moves the return date with it. **×** removes it.
 - **The selected window (●)** decides what's shown as free. Click another window to switch. Every bookable item on the equipment list gets a badge: **✓ Free for your dates**, **⚠ Collect from 10:00 AM Mon 11/2** / **⚠ Return by 2:00 PM Wed 11/4** (free those days, but not for your times), or **✗ Not free for your dates**. Under the selected window, the panel sums up the page ("12 free · 1 with a time problem · 1 not free").
-- **Fit times**: when the only problem is that some preset items must be collected later or returned earlier, this button narrows the window to times that fit them all.
+- **Free for only part of your dates**: when an item is free for just part of the window (Connect2 calls this "a shorter booking"), or only from a later pickup time or until an earlier return, it says so once, plainly ("Free Wed 11/4 8 AM → Thu 11/5 12 PM"), with **Use these dates**. That button changes the selected window to those times, and **Undo** puts it back.
+- **Fit times**: when every preset problem is that some item is free for only part of the window, this button narrows the window to times that fit them all.
 - **Warnings**: past dates, overlapping windows, a return before pickup (this one blocks booking), and windows over 3 days.
 
-Connect2's own Availability box still works as a fallback when you have no dates here, but it only checks whole days and reloads the page.
+Connect2's own **Availability** box (Collect / Return / Go) is replaced, so dates are set in one place only. It only took whole days, and its markers on the list would contradict the helper's. In its place, a small box shows your selected dates with **Change dates**. Dates you had already set there with Go are carried over once.
 
 ### Preset
 
@@ -83,7 +84,7 @@ npm install
 npm test
 ```
 
-`test/run.js` loads the script into saved copies of the Select resource and Select time pages, plus a Select time page showing a rejected time (`test/fixtures/`, with the student name and session tokens removed) and simulates Connect2's reloads. It covers picking, alternates, not-bookable items and warnings, migration from v0.1, the add queue with and without dates (availability responses are faked), the search fallback, date detection, editing date windows and their warnings, migrations from v0.3 shoot days and v0.7 check dates, availability badges on the list and the preset for the selected window, saved results and their expiry, fitting times to collect-from / return-by limits, ranking alternates by time fit, a full multi-booking run, recovering from a rejected time with Connect2's suggestions, the catalog and list scan, similarity ranking, picking replacements in the preset, during a run, and after a rejection, collapsible sections and edit mode, the button layout on the list, the problem report, the only-free switch, share links, and ending or advancing runs at Connect2's Complete page. The fake availability responses copy the real ones' shape. It can't cover the live site, so test real changes against Connect2 with a small preset and an empty basket.
+`test/run.js` loads the script into saved copies of the Select resource and Select time pages, plus a Select time page showing a rejected time (`test/fixtures/`, with the student name and session tokens removed) and simulates Connect2's reloads. It covers picking, alternates, not-bookable items and warnings, migration from v0.1, the add queue with and without dates (availability responses are faked), the search fallback, date detection, editing date windows and their warnings, migrations from v0.3 shoot days and v0.7 check dates, availability badges on the list and the preset for the selected window, saved results and their expiry, fitting times to collect-from / return-by limits, ranking alternates by time fit, a full multi-booking run, recovering from a rejected time with Connect2's suggestions, the catalog and list scan, similarity ranking, picking replacements in the preset, during a run, and after a rejection, collapsible sections and edit mode, the button layout on the list, the problem report, the only-free switch, share links, ending or advancing runs at Connect2's Complete page, items free for only part of the dates (with Use these dates and Undo), and replacing Connect2's Availability box. The fake availability responses copy the real ones' shape. It can't cover the live site, so test real changes against Connect2 with a small preset and an empty basket.
 
 To edit while installed, either paste changes into Tampermonkey's editor, or push to `main` with a higher `@version` and use Tampermonkey's **Check for updates**.
 
@@ -100,6 +101,7 @@ When Connect2 changes its page, save the new page (**Save Page As → Webpage, H
 - The 3-day warning is conservative: a range must fit in 72 hours *and* 3 calendar days. Connect2 may allow slightly longer; the limits are constants at the top of the date-ranges code, and a range over them is only warned about, not blocked.
 - Each booking still needs you for Terms, Verify, and Complete, by design.
 - The dates are one shared list, not saved per preset.
+- Connect2's "shorter booking" wording is read from its collect/return times when they include dates, falling back to the sentence ("…from Wed, 4 Nov (8:00 AM) - Thu, 5 Nov (12:00 PM)"), where the year is guessed from your dates.
 - The Complete page is recognized by its title ("… - Complete") or by being the last step ("Step 6 of 6"). The tests use a stand-in for that page, not a saved copy of the real one.
 - Items you aren't allowed to book can't be added to presets. If permissions change later, the add skips them and reports it.
 - Alternates are chosen by you. The script doesn't guess which units are interchangeable.
