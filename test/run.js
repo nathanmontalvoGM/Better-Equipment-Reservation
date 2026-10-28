@@ -485,6 +485,75 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   check(p.status().includes('press Back, empty your basket, then press Redo booking 1'), 'and says how to use it for this booking');
   check(p.postbacks.length === 0, 'without clicking anything on the page');
 
+  console.log('Check dates: availability next to every item');
+  resetStorage();
+  const shootLimits = { [ID.tripod]: { collect: '10:00 AM' } };
+  p = loadPage({ booked: [ID.light300d], limits: shootLimits });
+  const shootInput = (i) => p.root.querySelectorAll('.shoot input')[i]; // 0 pickup date, 1 pickup time, 2 return date, 3 return time
+  check(!!p.root.querySelector('.shoot') && p.root.textContent.includes('Pick when you need gear'), 'the panel has a Check dates section, even with no presets');
+  setInput(shootInput(0), '2030-10-28');
+  check(JSON.stringify(p.get('shoot')) === JSON.stringify({ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-28', endTime: '16:30' }),
+    'picking a pickup date fills in the return date and default times');
+  const badgeOf = (id) => {
+    const b = p.w.document.querySelector(`.resource-availability[data-id="${id}"]`).closest('li').querySelector('.c2p-avail');
+    return b ? b.textContent : null;
+  };
+  await until(() => !p.w.document.querySelector('.c2p-avail-pending'), 8000);
+  check(p.fetches.length === 14 && p.fetches.every((f) => f.start === '10/28/2030' && f.end === '10/28/2030'), 'checks the 14 bookable items on the page for those dates');
+  check(badgeOf(ID.fog) === '✓ Free for your dates', 'a free item says so');
+  check(badgeOf(ID.light300d).startsWith('✗ Not free for your dates'), 'a booked item says so');
+  check(badgeOf(ID.tripod) === '⚠ Collect from 10:00 AM Mon 10/28', 'an item free but not by the pickup time says when');
+  check(badgeOf(ID.dolly) === null, 'items you can\'t book get no badge');
+  check(p.root.querySelector('.shoot').textContent.includes('This page: 12 free · 1 with a time problem · 1 not free'), 'the panel sums up the page');
+  p.save();
+
+  p = loadPage({ booked: [ID.light300d], limits: shootLimits });
+  await until(() => !p.w.document.querySelector('.c2p-avail-pending'), 8000);
+  check(badgeOf(ID.fog) === '✓ Free for your dates', 'the dates carry over to the next page or reload');
+  setInput(shootInput(2), '2030-10-30');
+  await until(() => p.fetches.some((f) => f.end === '10/30/2030') && !p.w.document.querySelector('.c2p-avail-pending'), 8000);
+  check(p.fetches.filter((f) => f.end === '10/30/2030').length === 14, 'changing the return date re-checks the page');
+  setInput(shootInput(3), '08:00');
+  setInput(shootInput(2), '2030-10-28');
+  check(p.root.querySelector('.shoot').textContent.includes('⚠ Return must be after pickup.') && !p.w.document.querySelector('.c2p-avail'),
+    'a return before pickup is flagged and badges are hidden');
+  setInput(shootInput(3), '16:30');
+  p.button('+ Add to date ranges').click();
+  check(JSON.stringify(p.get('schedule').ranges) === JSON.stringify([{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-28', endTime: '16:30' }]),
+    '"+ Add to date ranges" turns the check dates into a booking range');
+  p.root.querySelector('.shoot .linkish').click(); // Clear
+  check(p.get('shoot') === null && !p.w.document.querySelector('.c2p-avail'), 'Clear removes the dates and the badges');
+
+  console.log('Presets use the check dates');
+  resetStorage();
+  storage['c2presets.presets'] = JSON.stringify({ Lights: { category: 'Media Arts Equipment', slots: [
+    { options: [{ id: ID.arri1, name: 'Arri Kit #1' }, { id: ID.arri3, name: 'Arri Kit #3' }] },
+  ] } });
+  storage['c2presets.ui'] = JSON.stringify({ current: 'Lights', open: true });
+  storage['c2presets.shoot'] = JSON.stringify({ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-29', endTime: '16:30' });
+  p = loadPage({ booked: [ID.arri1] });
+  await until(() => !p.w.document.querySelector('.c2p-avail-pending'), 8000);
+  const slotBadges = [...p.root.querySelectorAll('li.slot .badge')].map((b) => b.textContent).join();
+  check(slotBadges === 'Not available,Available', 'the preset shows each unit\'s availability for the check dates: ' + slotBadges);
+  p.button('Add all to basket').click();
+  await until(() => p.postbacks.length, 6000);
+  check(/ctl11_bookBtn$/.test(p.postbacks[0] || ''), 'adding picks Kit #3 for those dates, without Connect2\'s Availability box');
+
+  console.log('Preset button layout');
+  resetStorage();
+  storage['c2presets.presets'] = JSON.stringify({ X: { category: 'Media Arts Equipment', slots: [] } });
+  storage['c2presets.ui'] = JSON.stringify({ current: 'X', open: true, editing: true });
+  p = loadPage();
+  const tb = p.toggle(ID.tripod);
+  const area = tb.closest('.resource-book');
+  check(!!area && tb.parentElement.className === 'c2p-under' && tb.parentElement.previousElementSibling === area.querySelector('input[type=submit]'),
+    'the preset button sits on its own line under Connect2\'s Add button');
+  check(tb.style.boxSizing === 'border-box' && tb.style.maxWidth === '100%' && tb.parentElement.style.flex.startsWith('0 0 100%') && area.style.flexWrap === 'wrap',
+    'and is sized to fit inside the item instead of overflowing it');
+  check(p.w.document.querySelectorAll('.c2p-under').length === 15, 'one per item, with no duplicates after re-rendering');
+  p.button('Done picking').click();
+  check(p.w.document.querySelectorAll('.c2p-under').length === 0, 'and they go away when picking is done');
+
   console.log('Saved pages with a leftover panel');
   p = loadPage({ page: 'time', edit: (h) => h.replace('</form>', '</form><div id="c2presets-host"></div>') });
   check(p.w.document.querySelectorAll('#c2presets-host').length === 1 && !!p.root, 'replaces a stale panel container instead of adding a second one');

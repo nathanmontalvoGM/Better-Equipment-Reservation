@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Connect2 Gear Presets (MTSU)
 // @namespace    nathan.c2presets
-// @version      0.6.0
+// @version      0.7.0
 // @description  Gear presets for MTSU's Connect2 checkout: add a whole preset to your basket in one click, check its availability, and book it for several date ranges.
 // @homepageURL  https://github.com/nathanmontalvoGM/Better-Equipment-Reservation
 // @downloadURL  https://raw.githubusercontent.com/nathanmontalvoGM/Better-Equipment-Reservation/main/src/connect2-gear-presets.user.js
@@ -29,6 +29,8 @@
  *   limits (cage hours and other people's bookings), with a one-click fix when narrowing
  *   the times would work. If Connect2 still rejects a time, its reasons and suggested
  *   times are shown, and picking a suggestion continues the run.
+ * - Check dates: set a pickup and return (date and time) at the top of the panel, and every
+ *   item on the equipment list shows whether it's free then. Presets use the same dates.
  * - Replacements: every equipment list page you open is remembered (or scan the whole list
  *   once). When an item isn't free for a booking, similar items that are free then are
  *   offered as alternates, in Check ranges, before a run adds anything, and after a rejection. You finish
@@ -159,7 +161,7 @@
   const availKey = (d, id) => d.label + '|' + id;
   const availFor = (d, id) => (d ? availability[availKey(d, id)] : undefined);
 
-  async function fetchAvailability(id, d) {
+  async function fetchAvailability(id, d, opts = {}) {
     const key = availKey(d, id);
     if (availability[key]) return availability[key];
     let result;
@@ -200,7 +202,7 @@
       result = { label: 'Couldn\'t check', kind: 'unknown', detail: String(e.message || e) };
     }
     availability[key] = result;
-    render();
+    if (!opts.quiet) render();
     await sleep(150); // keep requests gentle on Connect2
     return result;
   }
@@ -245,14 +247,15 @@
   async function checkAvailability() {
     const p = presets[ui.current];
     if (!p || !p.slots.length) return setStatus('Pick a preset with items first.');
-    const d = pageDates();
-    if (!d) return setStatus('Enter Collect and Return dates in Connect2\'s Availability box, press Go, then check again.');
-    setStatus('Checking "' + ui.current + '" for ' + d.label + '…');
-    await checkSlots(p, d);
-    const missing = p.slots.filter((s) => !s.options.some((o) => (availFor(d, o.id) || {}).kind === 'ok'));
+    const act = activeDates();
+    if (!act) return setStatus('Set Check dates at the top of the panel first.');
+    const d = act.d;
+    setStatus('Checking "' + ui.current + '" for ' + act.label + '…');
+    await checkSlots(p, d, act.booking);
+    const missing = p.slots.filter((s) => !s.options.some((o) => fitFor(availFor(d, o.id), act.booking).kind === 'ok'));
     setStatus(missing.length
-      ? missing.length + ' of ' + p.slots.length + ' slot(s) have no free unit for ' + d.label + ': ' + missing.map((s) => s.options[0].name).join('; ')
-      : 'Every slot in "' + ui.current + '" has a free unit for ' + d.label + '.');
+      ? missing.length + ' of ' + p.slots.length + ' slot(s) have no free unit for ' + act.label + ': ' + missing.map((s) => s.options[0].name).join('; ')
+      : 'Every slot in "' + ui.current + '" has a free unit for ' + act.label + '.');
   }
 
   // ---------- date ranges → bookings ----------
@@ -438,6 +441,168 @@
     saveSchedule();
     clearReports();
     checkRanges(); // same dates are cached, so this is quick
+  }
+
+  // ---------- check dates: availability next to every item on the list ----------
+  // shoot: { startDate, startTime, endDate, endTime } or null. Saved, so it carries across pages.
+  let shoot = store.get('shoot', null);
+  const shootValid = () => validRange(shoot) && minutesAt(shoot.endDate, shoot.endTime) > minutesAt(shoot.startDate, shoot.startTime);
+  const cap = (t) => (t ? t[0].toUpperCase() + t.slice(1) : t);
+
+  // The dates presets and badges use: the panel's check dates, else Connect2's own Availability box.
+  function activeDates() {
+    if (shootValid()) return { d: bookingDates(shoot), booking: shoot, label: bookingLabel(shoot), source: 'panel' };
+    const d = pageDates();
+    return d ? { d, booking: null, label: d.label, source: 'connect2' } : null;
+  }
+
+  function updateShoot(field, value) {
+    const sh = Object.assign({ startDate: '', startTime: '09:00', endDate: '', endTime: '16:30' }, shoot || {});
+    // Moving the pickup date moves the return date with it, keeping the length.
+    if (field === 'startDate' && isYmd(value)) {
+      if (isYmd(sh.startDate) && isYmd(sh.endDate)) sh.endDate = addDays(sh.endDate, daysBetween(sh.startDate, value));
+      else if (!isYmd(sh.endDate) || sh.endDate < value) sh.endDate = value;
+    }
+    sh[field] = value;
+    shoot = sh;
+    store.set('shoot', shoot);
+    render();
+    loadBadges();
+  }
+
+  function copyRangeToShoot(i) {
+    const r = schedule.ranges[i];
+    if (!validRange(r)) return;
+    shoot = { startDate: r.startDate, startTime: r.startTime, endDate: r.endDate, endTime: r.endTime };
+    store.set('shoot', shoot);
+    render();
+    loadBadges();
+  }
+
+  function clearShoot() {
+    shoot = null;
+    store.del('shoot');
+    badgeToken += 1;
+    render();
+  }
+
+  function shootToRange() {
+    if (!shootValid()) return;
+    schedule.ranges.push({ startDate: shoot.startDate, startTime: shoot.startTime, endDate: shoot.endDate, endTime: shoot.endTime });
+    saveSchedule();
+    clearReports();
+    ui.showDays = true;
+    saveUi();
+    setStatus('Added ' + bookingLabel(shoot) + ' to your date ranges.');
+  }
+
+  // What the badge next to an item says for the check dates.
+  function itemBadge(it) {
+    if (!it.allowed || !shootValid()) return null;
+    const r = availFor(bookingDates(shoot), it.id);
+    if (!r) return { text: 'Checking…', kind: 'pending', detail: '' };
+    const f = fitFor(r, shoot);
+    if (f.kind === 'ok') return { text: '✓ Free for your dates', kind: 'ok', detail: '' };
+    if (f.kind === 'hours') return { text: '⚠ ' + cap(f.why), kind: 'limited', detail: '' };
+    if (f.kind === 'limited') return { text: '⚠ Only partly free', kind: 'limited', detail: r.detail };
+    if (f.kind === 'unknown') return { text: '? Couldn\'t check', kind: 'unknown', detail: r.detail };
+    return { text: '✗ Not free for your dates', kind: 'bad', detail: r.detail };
+  }
+
+  const BADGE_STYLE = {
+    ok: 'background:#dcfce7;color:#166534;', limited: 'background:#fef3c7;color:#92400e;', bad: 'background:#fee2e2;color:#991b1b;',
+    unknown: 'background:#e5e7eb;color:#374151;', pending: 'background:#f3f4f6;color:#6b7280;',
+  };
+
+  function decorateBadges() {
+    qsa('.c2p-avail').forEach((b) => b.remove());
+    if (!shootValid() || !isSelectPage()) return;
+    for (const it of pageItems()) {
+      const bd = itemBadge(it);
+      if (!bd) continue;
+      const box = document.createElement('div');
+      box.className = 'c2p-avail c2p-avail-' + bd.kind;
+      box.style.cssText = 'margin-top:8px;font-size:13px;line-height:1.4;';
+      const pill = document.createElement('span');
+      pill.textContent = bd.text;
+      pill.title = 'For ' + bookingLabel(shoot) + (bd.detail ? ': ' + bd.detail : '');
+      pill.style.cssText = 'display:inline-block;padding:2px 8px;border-radius:10px;font-weight:600;' + BADGE_STYLE[bd.kind];
+      box.appendChild(pill);
+      if (bd.detail && bd.kind !== 'pending') {
+        const det = document.createElement('div');
+        det.textContent = bd.detail;
+        det.style.cssText = 'margin-top:2px;font-size:12px;color:#555;';
+        box.appendChild(det);
+      }
+      (it.li.querySelector('.resource-other') || it.li).appendChild(box);
+    }
+  }
+
+  // Check every bookable item on this page for the check dates, one at a time.
+  let badgeToken = 0;
+  async function loadBadges() {
+    const t = ++badgeToken;
+    decorateBadges();
+    if (!shootValid() || !isSelectPage()) return;
+    const d = bookingDates(shoot);
+    let fetched = false;
+    for (const it of pageItems()) {
+      if (t !== badgeToken) return;
+      if (!it.allowed || availFor(d, it.id)) continue;
+      await fetchAvailability(it.id, d, { quiet: true });
+      fetched = true;
+      if (t !== badgeToken) return;
+      decorateBadges();
+    }
+    if (fetched) render(); // updates the summary and the preset's badges
+  }
+
+  function pageSummary() {
+    if (!shootValid() || !isSelectPage()) return '';
+    const counts = { ok: 0, limited: 0, bad: 0, unknown: 0, pending: 0 };
+    for (const it of pageItems()) { const bd = itemBadge(it); if (bd) counts[bd.kind] += 1; }
+    const parts = [];
+    if (counts.ok) parts.push(counts.ok + ' free');
+    if (counts.limited) parts.push(counts.limited + (counts.limited > 1 ? ' with time problems' : ' with a time problem'));
+    if (counts.bad) parts.push(counts.bad + ' not free');
+    if (counts.unknown) parts.push(counts.unknown + ' couldn\'t check');
+    if (counts.pending) parts.push('checking ' + counts.pending + '…');
+    return parts.length ? 'This page: ' + parts.join(' · ') : '';
+  }
+
+  function renderShoot() {
+    const sh = shoot || {};
+    const wrap = el('div', { class: 'shoot' },
+      el('div', { class: 'shoot-h' },
+        el('b', {}, 'Check dates'),
+        shoot ? el('button', { class: 'linkish small', onclick: clearShoot }, 'Clear') : null),
+      el('div', { class: 'day' },
+        el('span', { class: 'lbl' }, 'Pickup'),
+        el('input', { type: 'date', value: sh.startDate || '', 'aria-label': 'Check pickup date', onchange: (e) => updateShoot('startDate', e.target.value) }),
+        el('input', { type: 'time', value: sh.startTime || '09:00', step: 1800, 'aria-label': 'Check pickup time', onchange: (e) => updateShoot('startTime', e.target.value) })),
+      el('div', { class: 'day' },
+        el('span', { class: 'lbl' }, 'Return'),
+        el('input', { type: 'date', value: sh.endDate || '', min: sh.startDate || null, 'aria-label': 'Check return date', onchange: (e) => updateShoot('endDate', e.target.value) }),
+        el('input', { type: 'time', value: sh.endTime || '16:30', step: 1800, 'aria-label': 'Check return time', onchange: (e) => updateShoot('endTime', e.target.value) })));
+    const valid = schedule.ranges.map((r, i) => ({ r, i })).filter((x) => validRange(x.r));
+    if (valid.length) {
+      wrap.append(el('select', { class: 'copy', 'aria-label': 'Copy a date range', onchange: (e) => { if (e.target.value !== '') copyRangeToShoot(Number(e.target.value)); } },
+        el('option', { value: '' }, 'Copy one of your date ranges…'),
+        valid.map((x) => el('option', { value: String(x.i) }, bookingLabel(x.r)))));
+    }
+    if (!shoot) {
+      wrap.append(el('div', { class: 'muted' }, 'Pick when you need gear, and every item on the equipment list shows whether it\'s free then.'));
+    } else if (!shootValid()) {
+      wrap.append(el('div', { class: 'warn' }, validRange(shoot) ? '⚠ Return must be after pickup.' : 'Pick a pickup and a return date.'));
+    } else {
+      const b = computeBookings([shoot])[0];
+      if (b && b.warnings.length) wrap.append(el('div', { class: 'warn' }, '⚠ ' + b.warnings.join('; ')));
+      wrap.append(el('div', { class: 'muted' }, isSelectPage()
+        ? (pageSummary() || 'Checking this page…')
+        : 'Open the equipment list to see what\'s free for ' + bookingLabel(shoot) + '.'));
+      wrap.append(el('div', { class: 'row' }, el('button', { onclick: shootToRange }, '+ Add to date ranges')));
+    }
+    return wrap;
   }
 
   // ---------- equipment catalog, for suggesting replacements ----------
@@ -784,17 +949,19 @@
     if (starting) return;
     starting = true;
     try {
-      const d = opts.dates || pageDates();
+      const act = opts.dates ? null : activeDates();
+      const d = opts.dates || (act && act.d);
+      const booking = opts.booking || (act && act.booking) || null;
       let note = '';
       if (d) {
-        setStatus('Finding free units for ' + d.label + '…');
-        await checkSlots(p, d, opts.booking);
+        setStatus('Finding free units for ' + (act ? act.label : d.label) + '…');
+        await checkSlots(p, d, booking);
       } else if (p.slots.some((s) => s.options.length > 1)) {
-        note = 'No dates were set, so first choices were used. To let alternates replace booked units, set Collect/Return and press Go before adding.';
+        note = 'No dates were set, so first choices were used. To let alternates replace booked units, set Check dates in the panel before adding.';
       }
       let items = p.slots.map((s) => {
-        const options = orderOptions(s.options, d, opts.booking);
-        const fitOf = (o) => (d ? fitFor(availFor(d, o.id), opts.booking) : { kind: 'nodates', why: '' });
+        const options = orderOptions(s.options, d, booking);
+        const fitOf = (o) => (d ? fitFor(availFor(d, o.id), booking) : { kind: 'nodates', why: '' });
         return { options, fits: options.map(fitOf), first: s.options[0], firstFit: fitOf(s.options[0]) };
       });
       // In a run, stop before adding anything if an item has no unit that fits this booking,
@@ -1082,6 +1249,10 @@
     .day .lbl { width: 46px; flex: none; font-size: 12px; color: #444; }
     .day .xspace { width: 27px; flex: none; }
     .okline { color: #166534; font-size: 12px; }
+    .shoot { border: 1px solid #c7d2fe; background: #f5f7ff; border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 5px; }
+    .shoot-h { display: flex; justify-content: space-between; align-items: center; }
+    .linkish.small { font-weight: 400; font-size: 12px; color: #2563eb; }
+    select.copy { font-size: 12px; padding: 2px; }
     .repl { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; padding-left: 12px; }
     .repl button, .gate button { font-size: 12px; }
     .cand { display: flex; gap: 6px; align-items: baseline; justify-content: space-between; width: 100%; font-size: 12px; }
@@ -1106,16 +1277,19 @@
     return n;
   }
 
-  function renderSlot(slot, si, dates) {
+  function renderSlot(slot, si, act) {
     const opts = slot.options.map((o, oi) => {
-      const a = availFor(dates, o.id);
+      const a = act ? availFor(act.d, o.id) : null;
+      const f = a && act.booking ? fitFor(a, act.booking) : null;
+      const kind = f ? (f.kind === 'hours' ? 'limited' : f.kind) : a && a.kind;
+      const label = f && f.kind === 'hours' ? cap(f.why) : a && a.label;
       return el('div', { class: 'opt' + (oi ? ' alt' : '') },
         oi ? el('span', { class: 'or' }, 'or') : null,
         el('span', {}, o.name),
-        a ? el('span', { class: 'badge ' + a.kind, title: a.detail || '' }, a.label) : null,
+        a ? el('span', { class: 'badge ' + kind, title: a.detail || '' }, label) : null,
         slot.options.length > 1 ? el('button', { class: 'x', title: 'Remove this unit', onclick: () => removeOption(si, oi) }, '×') : null,
         o.note && WARN_RE.test(o.note) ? el('div', { class: 'warn' }, '⚠ ' + o.note) : null,
-        a && a.kind !== 'ok' && a.detail ? el('div', { class: 'detail' }, a.detail) : null);
+        a && kind !== 'ok' && a.detail && !(f && f.kind === 'hours') ? el('div', { class: 'detail' }, a.detail) : null);
     });
     return el('li', { class: 'slot' + (ui.altFor === si ? ' target' : '') },
       el('div', { class: 'opts' }, opts),
@@ -1252,7 +1426,7 @@
   function render() {
     const queue = store.get('queue', null);
     const p = presets[ui.current];
-    const dates = pageDates();
+    const act = activeDates();
     root.innerHTML = '';
     root.append(el('style', {}, CSS));
 
@@ -1265,6 +1439,7 @@
       const body = el('div', { class: 'body' });
       const run = getRun();
       if (run) body.append(renderRun(run));
+      body.append(renderShoot());
 
       body.append(el('div', { class: 'row' },
         names.length
@@ -1276,7 +1451,7 @@
         p ? el('button', { onclick: deletePreset }, 'Delete') : null));
 
       if (p) {
-        if (p.slots.length) body.append(el('ul', {}, p.slots.map((s, si) => renderSlot(s, si, dates))));
+        if (p.slots.length) body.append(el('ul', {}, p.slots.map((s, si) => renderSlot(s, si, act))));
         else body.append(el('div', { class: 'muted' }, 'Empty. Turn on "Pick items", then click "+ Preset" on equipment in the list.'));
 
         if (ui.altFor != null && p.slots[ui.altFor]) {
@@ -1286,12 +1461,14 @@
 
         body.append(el('div', { class: 'row' },
           el('button', { class: 'primary', disabled: !!queue || starting || !p.slots.length || !isSelectPage(), onclick: () => startQueue(ui.current) }, 'Add all to basket'),
-          el('button', { disabled: !p.slots.length, onclick: checkAvailability, title: dates ? 'Uses ' + dates.label : 'Set dates in the Availability box and press Go first' }, 'Check availability'),
+          el('button', { disabled: !p.slots.length, onclick: checkAvailability, title: act ? 'Uses ' + act.label : 'Set Check dates at the top of the panel first' }, 'Check availability'),
           el('button', { class: ui.editing ? 'on' : '', onclick: () => { ui.editing = !ui.editing; if (!ui.editing) ui.altFor = null; saveUi(); render(); } }, ui.editing ? 'Done picking' : 'Pick items')));
 
-        body.append(el('div', { class: 'muted' }, dates
-          ? 'Dates from Connect2: ' + dates.label + '. Adding will use a free unit for each slot.'
-          : 'Set Collect/Return in the Availability box and press Go to check dates and let alternates replace booked units.'));
+        body.append(el('div', { class: 'muted' }, !act
+          ? 'Set Check dates above to see what\'s free and let alternates replace booked units.'
+          : act.source === 'panel'
+            ? 'Adding uses a unit that\'s free for your check dates in each slot.'
+            : 'Using Connect2\'s Availability dates (' + act.label + '). Adding uses a free unit for each slot.'));
 
         body.append(renderRanges(p));
       }
@@ -1318,9 +1495,10 @@
     decorateList();
   }
 
-  // Buttons next to Connect2's own Add buttons, only while picking.
+  // Availability badges, and (while picking) preset buttons under Connect2's own Add buttons.
   function decorateList() {
-    qsa('.c2p-toggle').forEach((b) => b.remove());
+    decorateBadges();
+    qsa('.c2p-under').forEach((b) => b.remove());
     const p = presets[ui.current];
     if (!ui.editing || !p) return;
     const altMode = ui.altFor != null && !!p.slots[ui.altFor];
@@ -1329,7 +1507,10 @@
       const b = document.createElement('button');
       b.type = 'button'; // never submits Connect2's form
       b.className = 'c2p-toggle';
-      let style = 'margin-left:6px;padding:6px 10px;border-radius:6px;font-size:13px;cursor:pointer;';
+      // Same width as Connect2's Add button, on its own line underneath it.
+      const w = it.btn ? it.btn.offsetWidth : 0;
+      let style = 'display:block;box-sizing:border-box;width:' + (w ? w + 'px' : '100%') + ';max-width:100%;margin:0;' +
+        'padding:6px 10px;border-radius:4px;font-size:14px;line-height:1.42857;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;';
       if (pos) {
         b.textContent = pos.oi ? '✓ Alternate' : '✓ In preset';
         b.title = 'Click to remove from the preset';
@@ -1346,8 +1527,13 @@
       if (!pos && it.allowed && it.note && WARN_RE.test(it.note)) b.title = 'Note: ' + it.note;
       b.style.cssText = style;
       b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); toggleItem(it); });
-      const slot = it.li.querySelector('.resource-book') || it.li;
-      slot.appendChild(b);
+      const area = it.li.querySelector('.resource-book') || it.li;
+      area.style.flexWrap = 'wrap'; // in case Connect2 lays the area out as a row
+      const under = document.createElement('div');
+      under.className = 'c2p-under';
+      under.style.cssText = 'flex:0 0 100%;display:flex;margin-top:6px;';
+      under.appendChild(b);
+      area.appendChild(under);
     }
   }
 
@@ -1355,5 +1541,5 @@
   render();
   if (store.get('scan', null)) scanTick();
   else if (store.get('queue', null)) runQueue(true);
-  else runTick();
+  else { runTick(); loadBadges(); }
 })();
