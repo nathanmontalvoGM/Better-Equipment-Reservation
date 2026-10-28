@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Connect2 Gear Presets (MTSU)
 // @namespace    nathan.c2presets
-// @version      0.9.0
+// @version      0.10.0
 // @description  Gear presets for MTSU's Connect2 checkout: add a whole preset to your basket in one click, check its availability, and book it for several date ranges.
 // @homepageURL  https://github.com/nathanmontalvoGM/Better-Equipment-Reservation
 // @downloadURL  https://raw.githubusercontent.com/nathanmontalvoGM/Better-Equipment-Reservation/main/src/connect2-gear-presets.user.js
@@ -31,6 +31,10 @@
  *   times are shown, and picking a suggestion continues the run.
  * - Dates: one list of pickup → return windows. The selected one shows next to every item on
  *   the equipment list whether it's free then; presets use it too; Book books them all.
+ * - "Only show gear that's free": a switch above Connect2's list hides what isn't free then.
+ * - Share links: a link that adds a preset for anyone with the script installed.
+ * - Runs notice Connect2's Complete page: they end after the last booking, or offer the next one.
+ * - Copy problem report: what the script did and found, for fixing it (never your name or login).
  * - Replacements: every equipment list page you open is remembered (or scan the whole list
  *   once). When an item isn't free for a booking, similar items that are free then are
  *   offered as alternates, in Check ranges, before a run adds anything, and after a rejection. You finish
@@ -178,6 +182,42 @@
     return null;
   }
 
+  // ---------- step log, for problem reports ----------
+  // A short history of what the script did, kept in this browser only. Gear names, dates and
+  // Connect2's messages go in; your name, login and the page's hidden session fields never do.
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info && GM_info.script && GM_info.script.version) || 'dev';
+  const LOG_MAX = 150;
+
+  function pageTitle() {
+    const h = qs('h1[id$="BannerContent_pageTitle"]');
+    return h ? clean(h.textContent) : '';
+  }
+  function stepText() {
+    const m = (document.body ? document.body.textContent : '').match(/Step \d+ of \d+/);
+    return m ? m[0] : '';
+  }
+  // Connect2's last wizard step: "Media Arts Equipment - Complete", "Step 6 of 6".
+  function isCompletePage() {
+    if (/(^|\s-\s)(booking\s+)?complete(d)?\s*$/i.test(pageTitle())) return true;
+    const m = stepText().match(/Step (\d+) of (\d+)/);
+    return !!m && m[1] === m[2] && Number(m[2]) > 1;
+  }
+  function pageKind() {
+    if (qs('ul.resource-list') && qs('input[id$="FuzzySearchTxt_textbox"]')) return 'list';
+    if (qs('input[id$="editResourceBookingsTime_datetime_startDate_textbox"]')) return 'time';
+    if (isCompletePage()) return 'complete';
+    const t = pageTitle();
+    return t ? 'other: ' + t.split(' - ').pop() : 'other';
+  }
+
+  function log(ev, detail) {
+    try {
+      const entries = store.get('log', []) || [];
+      entries.push({ t: Date.now(), k: pageKind(), ev, d: detail == null ? '' : String(detail).slice(0, 300) });
+      store.set('log', entries.slice(-LOG_MAX));
+    } catch (e) { /* the log is best-effort */ }
+  }
+
   const stripHtml = (h) => { const d = document.createElement('div'); d.innerHTML = h || ''; return clean(d.textContent); };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -232,6 +272,7 @@
       }
     } catch (e) {
       result = { label: 'Couldn\'t check', kind: 'unknown', detail: String(e.message || e) };
+      log('check failed', 'item ' + id + ' for ' + d.label + ': ' + result.detail);
     }
     result.at = Date.now();
     availability[key] = result;
@@ -520,26 +561,110 @@
   function decorateBadges() {
     qsa('.c2p-avail').forEach((b) => b.remove());
     const ab = activeBooking();
-    if (!ab || !isSelectPage() || busyElsewhere()) return;
-    for (const it of pageItems()) {
-      const bd = itemBadge(it);
-      if (!bd) continue;
-      const box = document.createElement('div');
-      box.className = 'c2p-avail c2p-avail-' + bd.kind;
-      box.style.cssText = 'margin-top:8px;font-size:13px;line-height:1.4;';
-      const pill = document.createElement('span');
-      pill.textContent = bd.text;
-      pill.title = 'For ' + bookingLabel(ab) + (bd.detail ? ': ' + bd.detail : '');
-      pill.style.cssText = 'display:inline-block;padding:2px 8px;border-radius:10px;font-weight:600;' + BADGE_STYLE[bd.kind];
-      box.appendChild(pill);
-      if (bd.detail && bd.kind !== 'pending') {
-        const det = document.createElement('div');
-        det.textContent = bd.detail;
-        det.style.cssText = 'margin-top:2px;font-size:12px;color:#555;';
-        box.appendChild(det);
+    if (ab && isSelectPage() && !busyElsewhere()) {
+      for (const it of pageItems()) {
+        const bd = itemBadge(it);
+        if (!bd) continue;
+        const box = document.createElement('div');
+        box.className = 'c2p-avail c2p-avail-' + bd.kind;
+        box.style.cssText = 'margin-top:8px;font-size:13px;line-height:1.4;';
+        const pill = document.createElement('span');
+        pill.textContent = bd.text;
+        pill.title = 'For ' + bookingLabel(ab) + (bd.detail ? ': ' + bd.detail : '');
+        pill.style.cssText = 'display:inline-block;padding:2px 8px;border-radius:10px;font-weight:600;' + BADGE_STYLE[bd.kind];
+        box.appendChild(pill);
+        if (bd.detail && bd.kind !== 'pending') {
+          const det = document.createElement('div');
+          det.textContent = bd.detail;
+          det.style.cssText = 'margin-top:2px;font-size:12px;color:#555;';
+          box.appendChild(det);
+        }
+        (it.li.querySelector('.resource-other') || it.li).appendChild(box);
       }
-      (it.li.querySelector('.resource-other') || it.li).appendChild(box);
     }
+    decorateFilterBar();
+  }
+
+  // ---------- "Only show gear that's free" switch above Connect2's list ----------
+  function setOnlyFree(on) {
+    ui.onlyFree = on;
+    saveUi();
+    log('only-free switch', on ? 'on' : 'off');
+    decorateBadges();
+    render();
+  }
+
+  function pickDatesFromBar() {
+    ui.open = true;
+    ui.showDates = true;
+    if (!schedule.ranges.length) return addRange(); // opens the new window's fields
+    ui.editRange = activeIndex();
+    saveUi(); render();
+  }
+
+  function decorateFilterBar() {
+    qsa('.c2p-filterbar').forEach((b) => b.remove());
+    qsa('[data-c2p-hidden]').forEach((li) => { li.style.display = ''; li.removeAttribute('data-c2p-hidden'); });
+    const list = qs('ul.resource-list');
+    if (!list || !isSelectPage() || busyElsewhere()) return;
+    const ab = activeBooking();
+    const on = !!ui.onlyFree && !!ab;
+
+    const bar = document.createElement('div');
+    bar.className = 'c2p-filterbar';
+    bar.style.cssText = 'display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap;margin:8px 0 14px;padding:12px 16px;border:2px solid #93c5fd;' +
+      'border-radius:10px;background:#eff6ff;color:#1d1d1f;font:15px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;';
+    const text = (t, css) => { const sp = document.createElement('span'); sp.textContent = t; sp.style.cssText = css || ''; return sp; };
+
+    if (!ab) {
+      bar.appendChild(text('Want to see only the gear that\'s free when you need it?', 'font-weight:600;'));
+      const pick = document.createElement('button');
+      pick.type = 'button';
+      pick.className = 'c2p-pickdates';
+      pick.textContent = 'Pick your dates';
+      pick.style.cssText = 'font:inherit;font-weight:600;padding:6px 14px;border-radius:8px;border:0;background:#2563eb;color:#fff;cursor:pointer;';
+      pick.addEventListener('click', (e) => { e.preventDefault(); pickDatesFromBar(); });
+      bar.appendChild(pick);
+      list.parentNode.insertBefore(bar, list);
+      return;
+    }
+
+    // A big, labelled on/off switch.
+    const sw = document.createElement('button');
+    sw.type = 'button';
+    sw.className = 'c2p-onlyfree';
+    sw.setAttribute('role', 'switch');
+    sw.setAttribute('aria-checked', String(on));
+    sw.style.cssText = 'display:inline-flex;align-items:center;gap:10px;border:0;background:none;padding:0;cursor:pointer;font:inherit;color:inherit;text-align:left;';
+    const track = text('', 'position:relative;flex:none;width:50px;height:28px;border-radius:14px;transition:background .15s;background:' + (on ? '#2563eb' : '#9ca3af') + ';');
+    track.appendChild(text('', 'position:absolute;top:3px;left:' + (on ? '25px' : '3px') + ';width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .15s;'));
+    sw.appendChild(track);
+    const words = text('', 'display:flex;flex-direction:column;');
+    words.appendChild(text('Only show gear that\'s free ' + (on ? '(on)' : '(off)'), 'font-weight:700;'));
+    words.appendChild(text(shortLabel(ab), 'font-size:13px;color:#374151;'));
+    sw.appendChild(words);
+    sw.addEventListener('click', (e) => { e.preventDefault(); setOnlyFree(!on); });
+    bar.appendChild(sw);
+
+    let hidden = 0, pending = 0;
+    if (on) {
+      for (const it of pageItems()) {
+        const bd = itemBadge(it);
+        if (bd && (bd.kind === 'pending' || bd.kind === 'unknown')) { if (bd.kind === 'pending') pending += 1; continue; }
+        if (!it.allowed || (bd && bd.kind !== 'ok')) {
+          it.li.style.display = 'none';
+          it.li.setAttribute('data-c2p-hidden', '');
+          hidden += 1;
+        }
+      }
+    }
+    const shown = pageItems().length - hidden;
+    const note = !on ? 'Turn this on to hide everything that isn\'t free then.'
+      : pending ? 'Still checking ' + pending + ' item' + (pending > 1 ? 's' : '') + '…'
+      : !shown ? 'Nothing on this page is free then. Try the next page.'
+      : 'Hiding ' + hidden + ' item' + (hidden === 1 ? '' : 's') + ' on this page that ' + (hidden === 1 ? 'isn\'t' : 'aren\'t') + ' free then.';
+    bar.appendChild(text(note, 'font-size:13px;color:#374151;'));
+    list.parentNode.insertBefore(bar, list);
   }
 
   // Items not yet checked for the active dates: the preset's units first, then this page's items
@@ -613,6 +738,7 @@
     const items = pageItems();
     for (const it of items) catalog[it.id] = { name: it.name, type: it.type, note: it.note, allowed: it.allowed, category: cat };
     if (items.length) store.set('catalog', catalog);
+    if (items.length) store.set('listUrl', location.href.split('#')[0]); // where share links and "next booking" go
     return items.length;
   }
 
@@ -726,6 +852,7 @@
     if (!isSelectPage()) return setStatus('Open Book by Category → your equipment list first.');
     if (store.get('queue', null) || getRun()) return setStatus('Finish or stop the current run first.');
     store.set('scan', { phase: 'clear', loads: 0 });
+    log('scan', 'started');
     scanTick();
   }
 
@@ -747,9 +874,10 @@
     }
     recordCatalog();
     const next = nextPageLink();
-    if (next) { store.set('scan', sc); setStatus('Scanning the equipment list… ' + catalogSize() + ' items saved so far.'); next.click(); return; }
+    if (next) { store.set('scan', sc); log('scan', 'page done, ' + catalogSize() + ' items known'); setStatus('Scanning the equipment list… ' + catalogSize() + ' items saved so far.'); next.click(); return; }
     store.del('scan');
     const total = listTotal();
+    log('scan', 'done: ' + catalogSize() + ' items known, list says ' + (total || '?'));
     setStatus('Scan done: the script now knows ' + catalogSize() + ' items' + (total ? ' (this list has ' + total + ')' : '') + ', so it can suggest replacements.');
   }
 
@@ -800,8 +928,10 @@
     saveRun({
       preset: ui.current,
       bookings: bookings.map(({ startDate, startTime, endDate, endTime, days }) => ({ startDate, startTime, endDate, endTime, days })),
-      b: 0, stage: 'basket', problem: '', notes: [],
+      b: 0, stage: 'basket', problem: '', notes: [], done: [],
+      listUrl: location.href.split('#')[0],
     });
+    log('run', 'started: ' + bookings.length + ' booking(s) of "' + ui.current + '"');
     beginBooking();
   }
 
@@ -837,9 +967,46 @@
     beginBooking();
   }
 
-  function endRun() { store.del('run'); store.del('queue'); setStatus('Run ended. Bookings you completed stay booked.'); }
+  function endRun() { log('run', 'ended by you'); store.del('run'); store.del('queue'); setStatus('Run ended. Bookings you completed stay booked.'); }
 
-  function handoff(run, problem) { run.stage = 'handoff'; run.problem = problem || ''; saveRun(run); render(); }
+  // Connect2 showed its Complete page: that booking is done.
+  function completeBooking(run) {
+    run.done = run.done || [];
+    if (run.done[run.b]) return; // the Complete page was reloaded
+    run.done[run.b] = true;
+    const n = run.bookings.length;
+    log('run', 'booking ' + (run.b + 1) + ' of ' + n + ' complete');
+    if (run.b + 1 >= n) {
+      store.del('run');
+      return setStatus(n > 1
+        ? '✓ All ' + n + ' bookings of "' + run.preset + '" are complete. The run has ended.'
+        : '✓ Booking complete. The run has ended.');
+    }
+    run.stage = 'done';
+    run.problem = '';
+    saveRun(run);
+    render();
+  }
+
+  // From the Complete page (or anywhere): go back to the equipment list and start the next booking.
+  function goToNextBooking() {
+    const run = getRun();
+    if (!run) return;
+    if (isSelectPage()) return nextBooking(1);
+    const url = run.listUrl || store.get('listUrl', '');
+    if (!url) return setStatus('Open Book by Category → ' + ((presets[run.preset] || {}).category || 'your equipment category') + ' to start booking ' + (run.b + 2) + '.');
+    run.autoStart = true;
+    saveRun(run);
+    log('run', 'going back to the list for booking ' + (run.b + 2));
+    location.href = url;
+  }
+
+  function handoff(run, problem) {
+    run.stage = 'handoff'; run.problem = problem || '';
+    saveRun(run);
+    log('run', 'booking ' + (run.b + 1) + (problem ? ' stopped: ' + problem : ': pressed Next to Terms & Conditions'));
+    render();
+  }
 
   // Called by the basket queue when a run's gear is in the basket.
   function afterRunBasket(run, good, summary) {
@@ -849,6 +1016,7 @@
     if (!btn || btn.disabled) return handoff(run, 'Couldn\'t press Create booking. Press it yourself, set ' + bookingLabel(run.bookings[run.b]) + ', and finish the booking.');
     run.stage = 'create';
     saveRun(run); render();
+    log('run', 'booking ' + (run.b + 1) + ': pressed Create booking');
     btn.click(); // "Create booking" → Select time
   }
 
@@ -886,6 +1054,7 @@
     run.stage = 'time';
     run.problem = '';
     saveRun(run);
+    log('run', 'picked Connect2\'s suggested time ' + bookingLabel(sug));
     render();
     link.click();
   }
@@ -900,7 +1069,14 @@
   // Runs on every page load while a run is active and no basket queue is working.
   function runTick() {
     const run = getRun();
-    if (!run || run.stage === 'handoff' || run.stage === 'basket' || run.stage === 'gate') return;
+    if (!run) return;
+    if (isCompletePage()) return completeBooking(run);
+    if (run.stage === 'done' && run.autoStart && isSelectPage()) {
+      run.autoStart = false;
+      saveRun(run);
+      return nextBooking(1);
+    }
+    if (run.stage === 'handoff' || run.stage === 'basket' || run.stage === 'gate' || run.stage === 'done') return;
     const bk = run.bookings[run.b];
     if (!isTimePage()) {
       return handoff(run, 'Connect2 didn\'t open the Select time step' + (pageMessage() ? ': ' + pageMessage() : '') +
@@ -913,6 +1089,7 @@
       setField('endTime', time12(bk.endTime));
       run.stage = 'time';
       saveRun(run);
+      log('run', 'booking ' + (run.b + 1) + ': filled ' + mdy(bk.startDate) + ' ' + time12(bk.startTime) + ' → ' + mdy(bk.endDate) + ' ' + time12(bk.endTime) + ', pressed Update');
       statusText = 'Booking ' + (run.b + 1) + ' of ' + run.bookings.length + ': setting ' + bookingLabel(bk) + '…';
       render();
       const update = qs('input[id$="editResourceBookingsTime_btnUpdate"]');
@@ -977,6 +1154,7 @@
         const blocked = items.map((it, si) => si).filter((si) => !items[si].fits.some((f) => f.kind === 'ok') && !decided[si]);
         if (blocked.length) {
           run.stage = 'gate';
+          log('run', 'booking ' + (run.b + 1) + ': not free as booked: ' + blocked.map((si) => items[si].first.name).join('; '));
           run.gate = { decided, blocked: blocked.map((si) => ({ si, id: items[si].first.id, name: items[si].first.name, why: items[si].firstFit.why })) };
           saveRun(run);
           setStatus('Booking ' + (run.b + 1) + ': ' + blocked.length + (blocked.length > 1 ? ' items aren\'t' : ' item isn\'t') + ' free as booked. Nothing was added yet; choose what to do above.');
@@ -985,6 +1163,7 @@
         items = items.filter((it, si) => decided[si] !== 'skip');
         if (Object.values(decided).includes('skip')) note = [note, 'Left out: ' + Object.keys(decided).filter((k) => decided[k] === 'skip').map((k) => p.slots[k].options[0].name).join('; ') + '.'].filter(Boolean).join(' ');
       }
+      log('adding', '"' + name + '": ' + items.length + ' item(s)' + (d ? ' for ' + (act ? act.label : d.label) : ', no dates'));
       store.set('queue', { preset: name, items, i: 0, opt: 0, phase: 'find', before: -1, loadsKey: '', loads: 0, skipped: [], results: [], note, run: !!opts.run });
     } finally {
       starting = false;
@@ -1007,6 +1186,7 @@
     const it = q.items[q.i];
     const o = it.options[q.opt];
     q.skipped.push(o.name + ' (' + reason + ')');
+    log('skip', o.name + ': ' + reason);
     if (q.opt + 1 < it.options.length) {
       q.opt += 1; q.phase = 'find'; q.loads = 0;
     } else {
@@ -1042,6 +1222,7 @@
     if (q.phase === 'clicked') {
       const now = basketCount();
       const ok = q.before >= 0 && now > q.before;
+      log(ok ? 'added' : 'not added', o.name + ' (basket ' + q.before + ' → ' + now + ')' + (ok ? '' : pageMessage() ? ': ' + pageMessage() : ''));
       if (!ok) {
         q.results.push({ ok: false, line: o.name + ': ' + (pageMessage() || 'basket count didn\'t change (already in basket?)') });
       } else {
@@ -1069,6 +1250,7 @@
       q.before = basketCount();
       q.phase = 'clicked';
       store.set('queue', q);
+      log('add', 'pressed Add for ' + o.name + ' (item ' + o.id + '), basket was ' + q.before);
       match.btn.click(); // Connect2's own button: posts back and reloads the page
       return;
     }
@@ -1085,6 +1267,7 @@
     if (!box || !btn) { q.phase = 'searched2'; return continueQueue(q); }
     q.phase = phase;
     store.set('queue', q);
+    log('search', '"' + text + '"');
     box.value = text;
     btn.click(); // reloads the page with search results
   }
@@ -1094,6 +1277,7 @@
     const good = q.results.filter((r) => r.ok).length;
     const lines = q.results.filter((r) => r.line).map((r) => (r.ok ? '• ' : '✗ ') + r.line);
     let msg = 'Added ' + good + ' of ' + q.results.length + ' from "' + q.preset + '".';
+    log('done adding', 'added ' + good + ' of ' + q.results.length);
     if (lines.length) msg += '\n' + lines.join('\n');
     if (q.note) msg += '\n' + q.note;
     const box = searchBox();
@@ -1104,6 +1288,107 @@
       return afterRunBasket(run, good, msg);
     }
     setStatus(msg + '\nNext: set your dates and press Create booking.');
+  }
+
+  // ---------- copying, sharing and problem reports ----------
+  function copyText(textToCopy, okMsg) {
+    const fallback = () => { prompt('Copy this (Ctrl+C or ⌘C), then press OK:', textToCopy); setStatus(okMsg); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(textToCopy).then(() => setStatus(okMsg), fallback);
+    else fallback();
+  }
+
+  const b64url = (str) => btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const unb64url = (code) => decodeURIComponent(escape(atob(code.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (code.length % 4)) % 4))));
+
+  // A link to the equipment list that adds this preset for anyone with the script installed.
+  function shareLink(name) {
+    const p = presets[name];
+    const data = { v: 1, n: name, c: p.category, s: p.slots.map((sl) => sl.options.map((o) => [o.id, o.name])) };
+    const base = (store.get('listUrl', '') || location.origin + '/wizard/').split('#')[0];
+    return base + '#c2p=' + b64url(JSON.stringify(data));
+  }
+
+  function copyShareLink() {
+    if (!presets[ui.current]) return;
+    log('share', 'copied link for "' + ui.current + '"');
+    copyText(shareLink(ui.current), 'Link copied. Anyone with this script installed who opens it while signed in to Connect2 gets "' + ui.current + '".');
+  }
+
+  // Opened a share link: offer to add the preset in it.
+  function importFromLink() {
+    const m = location.hash.match(/^#c2p=([A-Za-z0-9_-]+)/);
+    if (!m) return;
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* leave the link as is */ }
+    let data = null;
+    try { data = JSON.parse(unb64url(m[1])); } catch (e) { data = null; }
+    const preset = data && data.n && Array.isArray(data.s) ? normalizePreset({
+      category: data.c,
+      slots: data.s.map((units) => ({ options: (Array.isArray(units) ? units : []).filter((u) => Array.isArray(u) && u[0] != null)
+        .map((u) => ({ id: u[0], name: u[1], note: (catalog[String(u[0])] || {}).note || '' })) })),
+    }) : null;
+    if (!preset || !preset.slots.length) {
+      log('share', 'broken link');
+      return setStatus('That share link is broken or incomplete. Ask for a new one.');
+    }
+    const count = preset.slots.length + (preset.slots.length === 1 ? ' item' : ' items');
+    if (!confirm('Add the preset "' + data.n + '" (' + count + ') that was shared with you?')) return log('share', 'declined "' + data.n + '"');
+    let name = String(data.n);
+    if (presets[name] && !confirm('You already have a preset called "' + name + '". Replace it?')) {
+      let k = 2;
+      while (presets[name + ' (shared' + (k > 2 ? ' ' + k : '') + ')']) k += 1;
+      name = name + ' (shared' + (k > 2 ? ' ' + k : '') + ')';
+    }
+    presets[name] = preset;
+    Object.assign(ui, { current: name, open: true, showPresets: true, editing: false, altFor: null });
+    savePresets(); saveUi();
+    log('share', 'added "' + name + '" (' + count + ')');
+    setStatus('Added the preset "' + name + '" (' + count + ').');
+  }
+
+  function problemReport() {
+    const yes = (x) => (x ? 'yes' : 'no');
+    const ua = (navigator.userAgent.match(/(Edg|OPR|Firefox|Chrome|Version)\/(\d+)/) || []);
+    const browser = ua[1] ? ({ Edg: 'Edge', OPR: 'Opera', Version: 'Safari' }[ua[1]] || ua[1]) + ' ' + ua[2] : 'unknown browser';
+    const btns = qsa('li.resource-list-item .resource-book input[type="submit"]');
+    const run = getRun(), q = store.get('queue', null), sc = store.get('scan', null);
+    const p = presets[ui.current];
+    const ab = activeBooking();
+    const when = (t) => { const d = new Date(t); return pad(d.getMonth() + 1) + '/' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()); };
+    const lines = [
+      'Connect2 Gear Presets problem report',
+      'Script ' + VERSION + ' · ' + browser + ' · ' + new Date().toISOString(),
+      'Page: ' + location.pathname + ' (' + pageKind() + ')' + (stepText() ? ' · ' + stepText() : '') + (pageTitle() ? ' · "' + pageTitle() + '"' : ''),
+      'Found: ' + [
+        'list items ' + qsa('li.resource-list-item').length,
+        'add buttons ' + btns.filter((b) => !b.disabled).length + ' on / ' + btns.filter((b) => b.disabled).length + ' off',
+        'search box ' + yes(searchBox()),
+        'next page ' + yes(nextPageLink()),
+        'previous page ' + yes(prevPageLink()),
+        'list total ' + (listTotal() || '?'),
+        'basket ' + (basketCount() >= 0 ? basketCount() : 'not found'),
+        'Next/Create button ' + (nextBtn() ? (nextBtn().disabled ? 'disabled' : 'enabled') : 'not found'),
+        'time fields ' + yes(timeField('startDate')),
+        'clash box ' + yes(qs('[id$="MainWizardContent_suggestionsDv"]')),
+      ].join(', '),
+      'State: ' + [
+        Object.keys(presets).length + ' preset(s)' + (p ? ', selected has ' + p.slots.length + ' item(s)' : ''),
+        schedule.ranges.length + ' date window(s)' + (ab ? ', selected ' + bookingLabel(ab) : ''),
+        run ? 'run on booking ' + (run.b + 1) + '/' + run.bookings.length + ', stage ' + run.stage + (run.problem ? ' (' + run.problem.slice(0, 160) + ')' : '') : 'no run',
+        q ? 'adding item ' + (q.i + 1) + '/' + q.items.length + ', phase ' + q.phase : 'not adding',
+        sc ? 'scanning (' + sc.phase + ', ' + sc.loads + ' pages)' : 'not scanning',
+        catalogSize() + ' known items',
+        Object.keys(availability).length + ' saved results',
+        'only-free switch ' + (ui.onlyFree ? 'on' : 'off'),
+      ].join('; '),
+      '',
+      'Recent steps (oldest first):',
+    ];
+    for (const e of store.get('log', []) || []) lines.push(when(e.t) + '  [' + e.k + '] ' + e.ev + (e.d ? ': ' + e.d : ''));
+    return lines.join('\n');
+  }
+
+  function copyProblemReport() {
+    copyText(problemReport(), 'Problem report copied. Paste it into a message to whoever gave you this script. It doesn\'t include your name or login.');
   }
 
   // ---------- preset management ----------
@@ -1175,11 +1460,7 @@
   }
 
   function exportPresets() {
-    const json = JSON.stringify(presets, null, 2);
-    const done = () => setStatus('Copied all presets to your clipboard. Send that text to your crew; they use Import.');
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(json).then(done, () => prompt('Copy this text:', json));
-    } else prompt('Copy this text:', json);
+    copyText(JSON.stringify(presets, null, 2), 'Copied all your presets as text. Someone else can add them with Import.');
   }
 
   function importPresets() {
@@ -1484,12 +1765,16 @@
     const names = Object.keys(presets);
     return [
       el('div', { class: 'row' },
+        el('button', { class: 'mini', onclick: copyShareLink, disabled: !presets[ui.current] || !presets[ui.current].slots.length, title: 'A link that adds this preset for anyone with the script installed' },
+          presets[ui.current] ? 'Copy link to share "' + ui.current + '"' : 'Copy share link'),
+        el('button', { class: 'mini', onclick: exportPresets, disabled: !names.length, title: 'All your presets as text' }, 'Export all'),
+        el('button', { class: 'mini', onclick: importPresets }, 'Import')),
+      el('div', { class: 'row' },
         store.get('scan', null)
           ? el('button', { class: 'mini', onclick: stopScan }, 'Stop scan')
           : el('button', { class: 'mini', onclick: startScan, disabled: !isSelectPage() || !!store.get('queue', null) || !!getRun(), title: 'Page through the whole equipment list once so the script can suggest replacements' },
             catalogSize() ? 'Rescan equipment list' : 'Scan equipment list'),
-        el('button', { class: 'mini', onclick: exportPresets, disabled: !names.length }, 'Export presets'),
-        el('button', { class: 'mini', onclick: importPresets }, 'Import')),
+        el('button', { class: 'mini', onclick: copyProblemReport, title: 'Copy what the script did and found, to send to whoever maintains it' }, 'Copy problem report')),
       el('div', { class: 'muted' }, catalogSize()
         ? 'Replacement suggestions draw on ' + catalogSize() + ' known items.'
         : 'Scan the list once so the script can suggest replacements.'),
@@ -1520,6 +1805,9 @@
             el('button', { onclick: () => decideGate(g.si, 'anyway') }, 'Add it anyway'),
             el('button', { onclick: () => decideGate(g.si, 'skip') }, 'Leave it out'))));
       }
+    } else if (run.stage === 'done') {
+      box.append(el('div', { class: 'okline' }, '✓ Booking ' + (run.b + 1) + ' of ' + n + ' is complete.'));
+      box.append(el('div', { class: 'muted' }, 'Next: ' + bookingLabel(run.bookings[run.b + 1]) + '.'));
     } else if (run.stage !== 'handoff') {
       box.append(el('div', {}, run.stage === 'basket' ? 'Adding "' + run.preset + '" to the basket…' : 'Setting the times…'));
     } else {
@@ -1527,8 +1815,8 @@
       const clash = isTimePage() && run.problem ? clashInfo() : null;
       if (isSelectPage()) {
         box.append(el('div', {}, last
-          ? 'That was the last booking. Once it shows Complete, end the run.'
-          : 'Once booking ' + (run.b + 1) + ' shows Complete, start the next one.'));
+          ? 'That was the last booking. Finish it, and the run ends when Connect2 shows Complete.'
+          : 'Finish booking ' + (run.b + 1) + ' first. When Connect2 shows Complete, the next one is one click away.'));
       } else if (isTimePage() && run.problem) {
         box.append(el('div', {}, clash && clash.suggestions.length
           ? 'Pick one of Connect2\'s suggested times to continue, or change the times on this page, press Update, then Next.'
@@ -1552,16 +1840,16 @@
         }
       } else {
         box.append(el('div', {}, 'Your turn: Terms & Conditions → Special Requests → Verify → Complete.' +
-          (last ? '' : ' Then open Book by Category → ' + ((presets[run.preset] || {}).category || 'your category') + ' for booking ' + (run.b + 2) + '.')));
+          (last ? ' The run ends by itself when Connect2 shows Complete.' : ' On the Complete page, this box offers booking ' + (run.b + 2) + '.')));
       }
       if (run.notes[run.b]) box.append(el('div', { class: 'detail' }, run.notes[run.b]));
     }
     const row = el('div', { class: 'row' });
-    if (run.stage === 'handoff' && isSelectPage() && !last) {
-      row.append(el('button', { class: 'primary', onclick: () => nextBooking(1) }, 'Start booking ' + (run.b + 2) + ' of ' + n));
+    if (run.stage === 'done' || (run.stage === 'handoff' && isSelectPage() && !last)) {
+      row.append(el('button', { class: 'primary', onclick: goToNextBooking }, 'Start booking ' + (run.b + 2) + ' of ' + n));
     }
     if (run.stage === 'handoff' && isSelectPage()) row.append(el('button', { onclick: () => nextBooking(0) }, 'Redo booking ' + (run.b + 1)));
-    row.append(el('button', { onclick: endRun }, run.stage === 'handoff' && last ? 'End run' : 'Stop run'));
+    row.append(el('button', { onclick: endRun }, (run.stage === 'handoff' && last) || run.stage === 'done' ? 'End run' : 'Stop run'));
     box.append(row);
     return box;
   }
@@ -1652,7 +1940,9 @@
   }
 
   recordCatalog();
+  log('page', 'opened' + (pageKind() === 'list' ? ': ' + qsa('li.resource-list-item').length + ' items, ' + pageItems().length + ' recognized' : '') + ' · script ' + VERSION);
   render();
+  importFromLink();
   if (store.get('scan', null)) scanTick();
   else if (store.get('queue', null)) runQueue(true);
   else runTick();

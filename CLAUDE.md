@@ -7,3 +7,5 @@
 - The script must never finish a booking or send credentials anywhere. It only clicks Connect2's own buttons in the user's logged-in tab and calls Connect2's own same-origin JSON endpoints. Date-range runs act only on the Select resource and Select time steps; the furthest they go is pressing Next into Terms & Conditions. The user accepts terms, verifies, and completes every booking.
 - The repo is public. Any new fixture from the live site must be scrubbed of the student's name, `__VIEWSTATE`, `__EVENTVALIDATION`, `__RequestVerificationToken`, and the form's `hash=` before committing.
 - Fixtures saved from a browser with the script installed contain an empty `<div id="c2presets-host">`; strip it.
+- The step log (`log()`) and problem report must never include the student's name, the page's hidden fields (`__VIEWSTATE`, `__EVENTVALIDATION`, `__RequestVerificationToken`), or cookies. Gear names, item ids, dates and Connect2's messages are fine.
+- The script is meant to be handed to classmates: user-facing text should be plain language, and new controls should be obvious without reading the README.

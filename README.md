@@ -4,6 +4,13 @@ A browser userscript for MTSU's Connect2 equipment checkout (`mtsu.getconnect2.c
 
 It runs inside your own logged-in Connect2 tab and only clicks Connect2's own buttons for you. It never stores your password and never talks to anything except Connect2. It never finishes a booking for you: it stops before Terms & Conditions, and you accept the terms, verify, and complete each booking yourself.
 
+## Quick start
+
+1. Install it (below), then open **Book by Category → Media Arts Equipment** in Connect2.
+2. Press **Pick your dates** in the blue bar above the equipment list and set when you'll pick up and return the gear.
+3. Turn on **Only show gear that's free** to hide everything you can't get then.
+4. If someone sent you a preset link, open it while signed in to Connect2 and press OK.
+
 ## Install
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/) (Chrome, Firefox, Edge). In Chrome, open the extension's **Details** page and turn on **Allow User Scripts**.
@@ -42,10 +49,20 @@ The gear you book every week. Pick a preset from the dropdown, or choose **+ New
   Back on **Book by Category → Media Arts Equipment**, the panel offers **Start booking 2 of N** (or **Redo**). If an item doesn't fit a window when its turn comes, the run stops before adding anything and asks, item by item: **Use** a replacement that's free then, **Add it anyway**, or **Leave it out**. If Connect2 still rejects a time on Select time, the run stops there and shows Connect2's reasons item by item (outside cage hours, booked by someone else), including the ones Connect2 hides behind "Show more". Connect2's suggested times appear as buttons: pick one and the run continues to Next.
 - **or just add to basket** (or **Add to basket** when you have no dates) adds one unit per item for the selected dates without booking. Every add reloads the page, so expect a few seconds of flicker. The summary lists any swaps and anything it couldn't add. **Stop** cancels; items already added stay in your basket.
 
+### Only show gear that's free
+
+A blue bar sits above Connect2's equipment list. With no dates set, it offers **Pick your dates**. Once dates are selected, it's an on/off switch: on hides every item on the page that's booked, doesn't fit your times, or that you can't book, and says how many it hid. It's off by default, remembers its setting as you change pages, and steps aside during a booking run. It works one page at a time, so if nothing on a page is free, it says to try the next one.
+
+### When a booking is complete
+
+When Connect2 shows its **Complete** page, the run marks that booking done. After the last booking, the run ends by itself. Otherwise the panel shows **Start booking 2 of 3**, which goes back to the equipment list and starts the next booking.
+
 ### More
 
 - **Scan equipment list** pages through the whole list once, the same as clicking Next through it, so replacement suggestions can come from all of it. The script also remembers every list page you open.
-- **Export presets / Import**: presets live only in the browser you made them in. Export copies them as text you can send to your crew or move to another computer.
+- **Copy link to share "…"** copies a link that adds the selected preset for anyone with the script installed. They open it while signed in to Connect2, and it asks before adding anything. If they're signed out, Connect2's sign-in page may drop the preset from the link, so they open it again after signing in. Links carry item names and Connect2's item numbers, and nothing about you.
+- **Export all / Import**: every preset as text, for moving to another computer.
+- **Copy problem report** copies what the script did and what it found on the current page: the page and step, which of Connect2's buttons and fields it could find, its current state, and its last 150 steps. It never includes your name, your login, or the page's hidden session fields. Send it to whoever maintains the script when something goes wrong.
 
 ### Replacements
 
@@ -66,7 +83,7 @@ npm install
 npm test
 ```
 
-`test/run.js` loads the script into saved copies of the Select resource and Select time pages, plus a Select time page showing a rejected time (`test/fixtures/`, with the student name and session tokens removed) and simulates Connect2's reloads. It covers picking, alternates, not-bookable items and warnings, migration from v0.1, the add queue with and without dates (availability responses are faked), the search fallback, date detection, editing date windows and their warnings, migrations from v0.3 shoot days and v0.7 check dates, availability badges on the list and the preset for the selected window, saved results and their expiry, fitting times to collect-from / return-by limits, ranking alternates by time fit, a full multi-booking run, recovering from a rejected time with Connect2's suggestions, the catalog and list scan, similarity ranking, picking replacements in the preset, during a run, and after a rejection, collapsible sections and edit mode, and the button layout on the list. The fake availability responses copy the real ones' shape. It can't cover the live site, so test real changes against Connect2 with a small preset and an empty basket.
+`test/run.js` loads the script into saved copies of the Select resource and Select time pages, plus a Select time page showing a rejected time (`test/fixtures/`, with the student name and session tokens removed) and simulates Connect2's reloads. It covers picking, alternates, not-bookable items and warnings, migration from v0.1, the add queue with and without dates (availability responses are faked), the search fallback, date detection, editing date windows and their warnings, migrations from v0.3 shoot days and v0.7 check dates, availability badges on the list and the preset for the selected window, saved results and their expiry, fitting times to collect-from / return-by limits, ranking alternates by time fit, a full multi-booking run, recovering from a rejected time with Connect2's suggestions, the catalog and list scan, similarity ranking, picking replacements in the preset, during a run, and after a rejection, collapsible sections and edit mode, the button layout on the list, the problem report, the only-free switch, share links, and ending or advancing runs at Connect2's Complete page. The fake availability responses copy the real ones' shape. It can't cover the live site, so test real changes against Connect2 with a small preset and an empty basket.
 
 To edit while installed, either paste changes into Tampermonkey's editor, or push to `main` with a higher `@version` and use Tampermonkey's **Check for updates**.
 
@@ -83,6 +100,7 @@ When Connect2 changes its page, save the new page (**Save Page As → Webpage, H
 - The 3-day warning is conservative: a range must fit in 72 hours *and* 3 calendar days. Connect2 may allow slightly longer; the limits are constants at the top of the date-ranges code, and a range over them is only warned about, not blocked.
 - Each booking still needs you for Terms, Verify, and Complete, by design.
 - The dates are one shared list, not saved per preset.
+- The Complete page is recognized by its title ("… - Complete") or by being the last step ("Step 6 of 6"). The tests use a stand-in for that page, not a saved copy of the real one.
 - Items you aren't allowed to book can't be added to presets. If permissions change later, the add skips them and reports it.
 - Alternates are chosen by you. The script doesn't guess which units are interchangeable.
 - The warning check is a word match on Connect2's item notes, so it can miss oddly worded rules or flag harmless ones.

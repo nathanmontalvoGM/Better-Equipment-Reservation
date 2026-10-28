@@ -64,16 +64,17 @@ function fakeFetch(booked, limits, calls) {
  * Load the page once. `edit` can change the HTML first (e.g. basket count or dates).
  * Clicks on Connect2's own submit buttons are recorded and blocked instead of posting back.
  */
-function loadPage({ page = 'resource', edit, prompts = [], booked = [], limits = {} } = {}) {
+function loadPage({ page = 'resource', edit, prompts = [], booked = [], limits = {}, url = URL, confirmAnswers = [] } = {}) {
   const vc = new VirtualConsole();
   vc.on('jsdomError', (e) => { if (!/navigation|submit/i.test(e.message)) console.log('  jsdom:', e.message); });
   const html = FIXTURES[page];
-  const dom = new JSDOM(edit ? edit(html) : html, { url: URL, virtualConsole: vc, pretendToBeVisual: true, runScripts: 'outside-only' });
+  const dom = new JSDOM(edit ? edit(html) : html, { url, virtualConsole: vc, pretendToBeVisual: true, runScripts: 'outside-only' });
   const w = dom.window;
   for (const [k, v] of Object.entries(storage)) w.localStorage.setItem(k, v);
-  w.prompt = () => prompts.shift() || null;
+  const prompted = [];
+  w.prompt = (m, d) => { prompted.push([m, d]); return prompts.shift() || null; };
   const confirms = [];
-  w.confirm = (m) => { confirms.push(m); return true; };
+  w.confirm = (m) => { confirms.push(m); return confirmAnswers.length ? confirmAnswers.shift() : true; };
   w.alert = (m) => console.log('  alert:', m);
   const fetches = [];
   w.fetch = fakeFetch(booked, limits, fetches);
@@ -85,7 +86,7 @@ function loadPage({ page = 'resource', edit, prompts = [], booked = [], limits =
   w.eval(SCRIPT);
   const root = w.document.getElementById('c2presets-host').shadowRoot;
   return {
-    w, root, postbacks, fetches, confirms,
+    w, root, postbacks, fetches, confirms, prompted,
     field: (name) => w.document.querySelector(`input[id$="editResourceBookingsTime_datetime_${name}_textbox"]`).value,
     button: (label) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === label),
     // A collapsible section's header, by its title ("Dates", "Preset", "More")
@@ -670,6 +671,124 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   check((badgeOf(ID.fog) || '').startsWith('? Couldn\'t check'), 'a failed check says so');
   p.save();
   check(Object.keys(JSON.parse(storage['c2presets.avail'] || '{}')).length === 0, 'and failures are never saved');
+
+  console.log('Problem report');
+  resetStorage();
+  storage['c2presets.presets'] = JSON.stringify({ Kit: { category: 'Media Arts Equipment', slots: [{ options: [{ id: ID.light300d, name: 'Aputure 300D Light with Fresnel 2x Lens CC3' }] }] } });
+  storage['c2presets.ui'] = JSON.stringify({ current: 'Kit', open: true });
+  p = loadPage();
+  p.button('Add to basket').click();
+  await until(() => p.postbacks.length);
+  p.save();
+  p = loadPage({ edit: withBasket(1) }); await wait();
+  p.save();
+  p = loadPage({ edit: withBasket(1) });
+  p.card('More').click();
+  p.button('Copy problem report').click();
+  const reportText = (p.prompted[p.prompted.length - 1] || [])[1] || '';
+  check(reportText.startsWith('Connect2 Gear Presets problem report') && reportText.includes('Page: /wizard/multiresource.aspx (list) · Step 1 of 6'),
+    'the report says which page you were on');
+  check(reportText.includes('list items 15, add buttons 14 on / 1 off') && reportText.includes('basket 1') && reportText.includes('next page yes'),
+    'what the script found on it');
+  check(/\[list\] add: pressed Add for Aputure 300D.*basket was 0/.test(reportText) && /\[list\] added: Aputure 300D.*\(basket 0 → 1\)/.test(reportText) && reportText.includes('done adding: added 1 of 1'),
+    'and the steps it took');
+  check(!reportText.includes('Test Student') && !reportText.includes('REDACTED') && !/VIEWSTATE|RequestVerification/.test(reportText), 'never your name or the page\'s session fields');
+  check(p.status().includes('Problem report copied'), 'and tells you what to do with it');
+
+  console.log('Only show gear that\'s free');
+  resetStorage();
+  p = loadPage({ booked: [ID.light300d], limits: shootLimits });
+  const bar = () => p.w.document.querySelector('.c2p-filterbar');
+  check(!!bar() && bar().textContent.includes('Want to see only the gear') && !!bar().querySelector('.c2p-pickdates'), 'without dates, a bar above the list offers to pick them');
+  check(bar().nextElementSibling === p.w.document.querySelector('ul.resource-list'), 'it sits right above Connect2\'s list');
+  bar().querySelector('.c2p-pickdates').click();
+  check(p.get('schedule').ranges.length === 1 && p.get('ui').editRange === 0 && !!p.root.querySelector('.range input[type=date]'), '"Pick your dates" adds dates in the panel, open for editing');
+  setInput(dateInput(0, 0), '2030-10-28');
+  await until(() => p.w.document.querySelector('.c2p-avail') && !p.w.document.querySelector('.c2p-avail-pending'), 8000);
+  const sw = () => bar().querySelector('[role=switch]');
+  check(!!sw() && sw().getAttribute('aria-checked') === 'false' && bar().textContent.includes('Only show gear that\'s free (off)') && bar().textContent.includes('Mon 10/28 9 AM → 4:30 PM'),
+    'with dates, it\'s a labelled on/off switch showing them, off by default');
+  const visible = () => [...p.w.document.querySelectorAll('li.resource-list-item')].filter((li) => li.style.display !== 'none');
+  const isVisible = (id) => p.w.document.querySelector(`.resource-availability[data-id="${id}"]`).closest('li').style.display !== 'none';
+  check(visible().length === 15, 'off: everything shows');
+  sw().click();
+  check(visible().length === 12 && !isVisible(ID.light300d) && !isVisible(ID.tripod) && !isVisible(ID.dolly) && isVisible(ID.fog),
+    'on: hides what\'s booked, what doesn\'t fit your times, and what you can\'t book');
+  check(bar().textContent.includes('Hiding 3 items on this page that aren\'t free then.') && sw().getAttribute('aria-checked') === 'true', 'and says how many it hid');
+  p.save();
+  p = loadPage({ booked: [ID.light300d], limits: shootLimits }); await wait(300);
+  check(visible().length === 12 && sw().getAttribute('aria-checked') === 'true', 'it stays on as you change pages');
+  sw().click();
+  check(visible().length === 15 && p.get('ui').onlyFree === false, 'turning it off shows everything again');
+  const allIds = [...FIXTURES.resource.matchAll(/class="resource-availability" data-id="(\d+)"/g)].map((m) => m[1]);
+  resetStorage();
+  storage['c2presets.ui'] = JSON.stringify({ open: true, onlyFree: true });
+  storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-28', endTime: '16:30' }] });
+  p = loadPage({ booked: allIds });
+  await until(() => p.w.document.querySelector('.c2p-filterbar') && !p.w.document.querySelector('.c2p-avail-pending') && p.w.document.querySelector('.c2p-avail'), 8000);
+  check(visible().length === 0 && bar().textContent.includes('Nothing on this page is free then. Try the next page.'), 'when nothing on the page is free, it says to try the next page');
+  storage['c2presets.run'] = JSON.stringify({ preset: 'X', bookings: [{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-28', endTime: '16:30', days: 1 }], b: 0, stage: 'handoff', problem: '', notes: [] });
+  p = loadPage({ booked: allIds }); await wait();
+  check(!bar() && visible().length === 15, 'during a booking run it steps aside and hides nothing');
+
+  console.log('Share links');
+  resetStorage();
+  storage['c2presets.presets'] = JSON.stringify({ 'Catio Doc': { category: 'Media Arts Equipment', slots: [
+    { options: [{ id: ID.arri1, name: 'Arri Softbank 1x650w 2x150w Three Light Kit #1 DD4' }, { id: ID.arri3, name: 'Arri Softbank 1x650W 2x150W 3 Light Kit #3 DD4' }] },
+    { options: [{ id: ID.tripod, name: '3 Pod V4AH Tripod Y4-Y5' }] },
+    { options: [{ id: ID.fog, name: 'Antari Z-Stream 1000W Fog Machine B1', note: 'Cannot be used in Campus Buildings without prior permission!' }] },
+  ] } });
+  storage['c2presets.ui'] = JSON.stringify({ current: 'Catio Doc', open: true });
+  p = loadPage();
+  p.card('More').click();
+  p.button('Copy link to share "Catio Doc"').click();
+  const link = (p.prompted[p.prompted.length - 1] || [])[1] || '';
+  check(link.startsWith('https://mtsu.getconnect2.com/wizard/multiresource.aspx#c2p=') && link.length < 700, 'the link points at the equipment list (' + link.length + ' characters)');
+  check(p.status().includes('Anyone with this script installed who opens it while signed in'), 'and says who it works for');
+
+  resetStorage(); // a classmate
+  p = loadPage({ url: link });
+  check((p.confirms[0] || '').includes('Add the preset "Catio Doc" (3 items) that was shared with you?'), 'opening it asks before adding anything');
+  const got = p.get('presets')['Catio Doc'];
+  check(got && slotIds(got) === ID.arri1 + '|' + ID.arri3 + ',' + ID.tripod + ',' + ID.fog, 'the preset arrives with its items and backups');
+  check(got.slots[2].options[0].note.includes('prior permission'), 'item notes are filled in from the equipment list');
+  check(p.w.location.hash === '' && p.get('ui').current === 'Catio Doc' && p.status().includes('Added the preset "Catio Doc" (3 items).'),
+    'it\'s selected, and the link part is cleared so a reload doesn\'t add it again');
+  p.save();
+  p = loadPage({ url: link, confirmAnswers: [true, false] });
+  check(Object.keys(p.get('presets')).join() === 'Catio Doc,Catio Doc (shared)', 'if you already have one by that name and say no to replacing, it\'s added as "(shared)"');
+  p = loadPage({ url: URL + '#c2p=bm90LXZhbGlk' });
+  check(p.status().includes('That share link is broken') && p.confirms.length === 0, 'a broken link says so and adds nothing');
+
+  console.log('Runs end when Connect2 shows Complete');
+  const completePage = (h) => h.replace(/Select time/g, 'Complete').replace('Step 2 of 6', 'Step 6 of 6').replace(/datetime_startDate_textbox/g, 'gone_textbox');
+  const twoRun = (b) => JSON.stringify({ preset: 'Lights', b, stage: 'handoff', problem: '', notes: [], done: [],
+    listUrl: URL, bookings: [
+      { startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-28', endTime: '16:30', days: 1 },
+      { startDate: '2030-10-30', startTime: '09:00', endDate: '2030-10-30', endTime: '16:30', days: 1 }] });
+  resetStorage();
+  storage['c2presets.presets'] = JSON.stringify({ Lights: { category: 'Media Arts Equipment', slots: [{ options: [{ id: ID.arri1, name: 'Arri Kit #1' }] }] } });
+  storage['c2presets.ui'] = JSON.stringify({ current: 'Lights', open: true });
+  storage['c2presets.run'] = twoRun(0);
+  p = loadPage({ page: 'time', edit: completePage }); await wait();
+  check(p.get('run').stage === 'done' && p.get('run').done[0] === true, 'the Complete page marks the booking done');
+  const runBox = () => p.root.querySelector('.run').textContent;
+  check(runBox().includes('✓ Booking 1 of 2 is complete.') && runBox().includes('Next: Wed 10/30') && !!p.button('Start booking 2 of 2') && !!p.button('End run'),
+    'and offers the next booking in one click');
+  p.save();
+  p = loadPage({ page: 'time', edit: completePage }); await wait();
+  check(p.get('run').b === 0 && p.get('run').stage === 'done', 'reloading the Complete page doesn\'t count it twice');
+  p.button('Start booking 2 of 2').click();
+  check(p.get('run').autoStart === true, 'the button heads back to the equipment list');
+  p.save();
+  p = loadPage();
+  await until(() => p.postbacks.length, 6000);
+  check(p.get('run').b === 1 && p.get('run').autoStart === false && /ctl13_bookBtn$/.test(p.postbacks[0] || ''), 'where booking 2 starts by itself');
+  storage['c2presets.run'] = twoRun(1);
+  delete storage['c2presets.queue'];
+  p = loadPage({ page: 'time', edit: completePage }); await wait();
+  check(p.get('run') === null && p.status().includes('✓ All 2 bookings of "Lights" are complete. The run has ended.'), 'after the last booking, the run ends by itself');
+  check(!p.root.querySelector('.run'), 'no End run button to press');
 
   console.log('Saved pages with a leftover panel');
   p = loadPage({ page: 'time', edit: (h) => h.replace('</form>', '</form><div id="c2presets-host"></div>') });
