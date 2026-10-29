@@ -9,7 +9,9 @@ const FIXTURES = {
   resource: fs.readFileSync(path.join(__dirname, 'fixtures/select-resource.html'), 'utf8'),
   time: fs.readFileSync(path.join(__dirname, 'fixtures/select-time.html'), 'utf8'),
   clash: fs.readFileSync(path.join(__dirname, 'fixtures/select-time-clash.html'), 'utf8'), // rejected Update
+  basket: fs.readFileSync(path.join(__dirname, 'fixtures/select-resource-basket.html'), 'utf8'), // 3 items in the basket (search results page)
 };
+const ACCOUNT = fs.readFileSync(path.join(__dirname, 'fixtures/account.html'), 'utf8'); // My Account, page 1 of 2 of bookings
 const SCRIPT = fs.readFileSync(path.join(__dirname, '../src/better-checkout.user.js'), 'utf8');
 const URL = 'https://mtsu.getconnect2.com/wizard/multiresource.aspx';
 
@@ -44,8 +46,13 @@ function longDate(mdyText) {
 
 // Fake Connect2 availability endpoint, shaped like the real responses:
 // `booked` ids come back as errors; `limits[id] = { collect, ret }` sets the collect-from / return-by times.
-function fakeFetch(booked, limits, calls) {
-  return async (url) => {
+function fakeFetch(booked, limits, calls, account, accountCalls) {
+  return async (url, init) => {
+    if (String(url).startsWith('/account')) { // My Account pages: `account` maps path → HTML
+      accountCalls.push({ url: String(url), headers: (init && init.headers) || {}, credentials: init && init.credentials });
+      const html = account && account[String(url)];
+      return html ? { ok: true, status: 200, text: async () => html } : { ok: false, status: 404, text: async () => '' };
+    }
     const params = new URLSearchParams(String(url).split('?')[1]);
     calls.push(Object.fromEntries(params));
     const id = params.get('resourceId');
@@ -73,7 +80,7 @@ function fakeFetch(booked, limits, calls) {
  * Load the page once. `edit` can change the HTML first (e.g. basket count or dates).
  * Clicks on Connect2's own submit buttons are recorded and blocked instead of posting back.
  */
-function loadPage({ page = 'resource', edit, prompts = [], booked = [], limits = {}, url = URL, confirmAnswers = [], version } = {}) {
+function loadPage({ page = 'resource', edit, prompts = [], booked = [], limits = {}, url = URL, confirmAnswers = [], version, account } = {}) {
   const vc = new VirtualConsole();
   vc.on('jsdomError', (e) => { if (!/navigation|submit/i.test(e.message)) console.log('  jsdom:', e.message); });
   const html = FIXTURES[page];
@@ -86,7 +93,8 @@ function loadPage({ page = 'resource', edit, prompts = [], booked = [], limits =
   w.confirm = (m) => { confirms.push(m); return confirmAnswers.length ? confirmAnswers.shift() : true; };
   w.alert = (m) => console.log('  alert:', m);
   const fetches = [];
-  w.fetch = fakeFetch(booked, limits, fetches);
+  const accountFetches = [];
+  w.fetch = fakeFetch(booked, limits, fetches, account, accountFetches);
   if (version) w.GM_info = { script: { version } }; // what Tampermonkey provides
   const postbacks = [];
   w.document.addEventListener('click', (e) => {
@@ -96,7 +104,7 @@ function loadPage({ page = 'resource', edit, prompts = [], booked = [], limits =
   w.eval(SCRIPT);
   const root = w.document.getElementById('c2presets-host').shadowRoot;
   return {
-    w, root, postbacks, fetches, confirms, prompted,
+    w, root, postbacks, fetches, confirms, prompted, accountFetches,
     field: (name) => w.document.querySelector(`input[id$="editResourceBookingsTime_datetime_${name}_textbox"]`).value,
     button: (label) => [...root.querySelectorAll('button')].find((b) => b.textContent.trim() === label),
     // A collapsible section's header, by its title ("Dates", "Preset", "More")
@@ -115,6 +123,12 @@ const timeValues = (start, end) => (h) => h
   .replace(/(id="[^"]*datetime_startDate_textbox")/, `$1 value="${start}"`)
   .replace(/(id="[^"]*datetime_endDate_textbox")/, `$1 value="${end}"`);
 const both = (...fns) => (h) => fns.reduce((acc, f) => f(acc), h);
+// The text "Copy problem report" produces (jsdom has no clipboard, so it goes to the prompt fallback).
+function problemReportOf(p) {
+  if (!p.button('Copy problem report')) p.card('Share and Help').click();
+  p.button('Copy problem report').click();
+  return (p.prompted[p.prompted.length - 1] || [])[1] || '';
+}
 const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).join('|')).join(',');
 
 (async () => {
@@ -539,7 +553,7 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
     'suggests similar lenses, closest first, not other gear: ' + cands().join(' | '));
   p.button('Add as backup').click();
   check(slotIds(p.get('presets').Catio) === '5000|6001,6003', 'adds the lens as an alternate');
-  check(p.status().includes('press Back, empty your basket, then press Redo booking 1'), 'and says how to use it for this booking');
+  check(p.status().includes('press Back, then Redo booking 1 and empty the basket first'), 'and says how to use it for this booking');
   check(p.postbacks.length === 0, 'without clicking anything on the page');
 
   console.log('Badges next to every item for the selected dates');
@@ -831,6 +845,162 @@ const slotIds = (preset) => preset.slots.map((s) => s.options.map((o) => o.id).j
   p = loadPage({ page: 'time', edit: completePage }); await wait();
   check(p.get('run') === null && p.status().includes('✓ All 2 bookings of "Lights" are complete. The run has ended.'), 'after the last booking, the run ends by itself');
   check(!p.root.querySelector('.run'), 'no End run button to press');
+
+  console.log('Basket section');
+  const withoutRow = (ctl) => (h) => h.replace(new RegExp('<tr id="[^"]*shoppingCart_resourceRpt_' + ctl + '_itemRow">[\\s\\S]*?</tr>'), '');
+  const basketText = () => (p.card('Basket') ? p.card('Basket').parentElement.textContent : '');
+  resetStorage();
+  p = loadPage({ page: 'basket' }); await wait();
+  check(basketText().includes('Canon 6D with 24-105mm L Series lens C1') && basketText().includes('Revo Shoulder Support Rig R2') && basketText().includes('Sony MDR-7506 Studio Headphones I6'),
+    'lists what\'s in Connect2\'s basket');
+  resetStorage();
+  p = loadPage(); await wait();
+  check(!p.card('Basket'), 'no Basket section when the basket is empty');
+  p = loadPage({ page: 'basket' }); await wait();
+  p.root.querySelector('button[aria-label="Remove Revo Shoulder Support Rig R2 from your basket"]').click();
+  check(p.postbacks.length === 1 && /shoppingCart_resourceRpt_ctl02_bookBtn$/.test(p.postbacks[0]), '× presses Connect2\'s own Remove for that item: ' + p.postbacks.join());
+  p.save();
+  p = loadPage({ page: 'basket', edit: withoutRow('ctl02') }); await wait();
+  check(p.status().includes('Removed Revo Shoulder Support Rig R2 from your basket.') && !p.get('empty') && p.postbacks.length === 0, 'and says so once the page comes back without it');
+
+  resetStorage();
+  p = loadPage({ page: 'basket' }); await wait();
+  p.button('Empty basket').click();
+  check(/ctl01_bookBtn$/.test(p.postbacks[0] || '') && p.get('empty').ids.join() === '609,404,333', 'Empty basket removes the first item');
+  check(!p.button('Empty basket') && !p.root.querySelector('.blist .x'), 'and hides the basket buttons while it works');
+  p.save();
+  p = loadPage({ page: 'basket', edit: withoutRow('ctl01') }); await wait();
+  check(/ctl02_bookBtn$/.test(p.postbacks[0] || ''), 'then the next one after the page reloads');
+  p.save();
+  p = loadPage({ page: 'basket', edit: both(withoutRow('ctl01'), withoutRow('ctl02'), withoutRow('ctl03')) }); await wait();
+  check(p.status().includes('Your basket is empty.') && !p.get('empty') && p.postbacks.length === 0, 'until the basket is empty');
+
+  resetStorage();
+  p = loadPage({ page: 'basket' }); await wait();
+  p.button('Empty basket').click();
+  for (let i = 0; i < 7; i++) { p.save(); p = loadPage({ page: 'basket' }); await wait(); } // Remove never works
+  check(p.status().includes('Couldn\'t remove') && !p.get('empty'), 'gives up and says so if Remove doesn\'t work');
+  check(p.get('log').filter((e) => e.ev === 'basket' && /pressed Remove/.test(e.d)).length === 6, 'after a few tries');
+
+  console.log('Booking with gear already in the basket');
+  const kitWithTripod = () => {
+    resetStorage();
+    storage['c2presets.presets'] = JSON.stringify({ Kit: { category: 'Media Arts Equipment', slots: [{ options: [{ id: ID.tripod, name: 'Manfrotto 502AH Video Head and Tripod #1' }] }] } });
+    storage['c2presets.ui'] = JSON.stringify({ current: 'Kit', open: true });
+    storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2030-10-28', startTime: '09:00', endDate: '2030-10-30', endTime: '17:00' }] });
+  };
+  kitWithTripod();
+  p = loadPage({ page: 'basket' }); await wait();
+  p.button('Book these dates').click();
+  await until(() => p.get('run') && p.get('run').stage === 'leftovers');
+  const leftoverBox = () => (p.root.querySelector('.run') || { textContent: '' }).textContent;
+  check(p.get('run').stage === 'leftovers' && leftoverBox().includes('Your basket already has 3 items') && leftoverBox().includes('Revo Shoulder Support Rig R2'),
+    'the run stops first and lists what\'s already in the basket');
+  check(p.postbacks.length === 0 && !p.get('queue'), 'without adding anything');
+  p.button('Empty the basket first').click();
+  check(/shoppingCart_resourceRpt_ctl01_bookBtn$/.test(p.postbacks[0] || '') && p.get('empty').then === 'run', '"Empty the basket first" starts removing');
+  p.save();
+  p = loadPage(); await wait(100); // Connect2 comes back with an empty basket
+  await until(() => p.postbacks.length);
+  check(p.get('run').stage === 'basket' && /resourceList_resourceRpt_ctl01_bookBtn$/.test(p.postbacks[0] || ''), 'then the run carries on and adds the preset: ' + p.postbacks.join());
+  kitWithTripod();
+  p = loadPage({ page: 'basket' }); await wait();
+  p.button('Book these dates').click();
+  await until(() => p.get('run') && p.get('run').stage === 'leftovers');
+  p.button('Book them too').click();
+  await until(() => p.postbacks.length);
+  check(p.get('run').stage === 'basket' && p.postbacks[0] === 'search' && !p.get('empty'), '"Book them too" keeps them and adds the preset');
+
+  console.log('Your bookings, from My Account');
+  const row = (ref, id, start, end, item, out) => `<tr><td data-label="Ref no"><a href="/bookings/view.aspx?id=${id}">${ref}</a></td>` +
+    `<td data-label="Start date">${start}</td><td data-label="End date">${end}</td><td data-label="Resource">${item}</td><td data-label="Checked out">${out}</td></tr>`;
+  const page2 = '<div id="resourceBookingDiv"><div class="pagination-area"><ul class="pagination"><li><a href="/account/resourcebookinglist/1">1</a></li><li class="active"><span>2</span></li></ul></div>' +
+    '<table class="table stacked-table"><tbody>' +
+    row('Con000105', 105, '11/2/2030 9:00 AM', '11/4/2030 4:30 PM', 'K-Tek Shotgun Mic Boompole Kit AA1, BB', '') +
+    row('Con000106', 106, '10/1/2020 9:00 AM', '10/2/2020 4:30 PM', 'Zoom H6 Recorder Z2', '10/1/2020 9:12 AM') + // still out: overdue
+    row('Con000107', 107, '9/1/2020 9:00 AM', '9/2/2020 4:30 PM', 'Old Light Kit', '') + // over and never collected
+    '</tbody></table></div>';
+  const account = { '/account': ACCOUNT, '/account/resourcebookinglist/2': page2 };
+  resetStorage();
+  p = loadPage({ account }); await wait(100);
+  check(p.accountFetches.map((f) => f.url).join() === '/account,/account/resourcebookinglist/2', 'reads My Account and its second page of bookings');
+  check(p.accountFetches.every((f) => f.credentials === 'same-origin') && p.accountFetches[1].headers['X-Requested-With'] === 'XMLHttpRequest', 'the way Connect2\'s own page does');
+  const bk = p.get('bookings').list;
+  check(bk.map((k) => k.ref + ':' + k.items.length).join() === 'Con000106:1,Con000101:6,Con000105:3', 'groups rows into bookings across pages, oldest first, without finished ones: ' + bk.map((k) => k.ref + ':' + k.items.length).join());
+  const kept = JSON.stringify(p.get('bookings')) + JSON.stringify(p.get('log'));
+  check(!kept.includes('Test Student') && !kept.includes('student@example.edu'), 'never keeps your name or email');
+  check(p.card('Your bookings') && p.card('Your bookings').textContent.includes('⚠ Overdue'), 'the closed section says what needs doing first');
+  p.card('Your bookings').click();
+  const bkText = () => p.card('Your bookings').parentElement.textContent;
+  check(bkText().includes('⚠ Overdue: due back Fri 10/2 4:30 PM') && bkText().includes('Tue 10/29 4:30 PM → Wed 10/30 4:30 PMCon000101'),
+    'each booking says when to pick up or return: ' + bkText().slice(0, 200));
+  check(bkText().includes('Canon C100 Mark ii A3-A6 · Sony UWP-D11 Wireless Lav Package I3') && !bkText().includes('Old Light Kit'), 'with its gear');
+  const ref = [...p.root.querySelectorAll('a.bk-ref')].find((a) => a.textContent === 'Con000101');
+  check(ref && ref.getAttribute('href') === '/bookings/view.aspx?id=101' && ref.target === '_blank', 'and a link to it in Connect2');
+  p.save();
+  p = loadPage({ account }); await wait(50);
+  check(p.accountFetches.length === 0, 're-reads My Account only every 10 minutes');
+  storage['c2presets.bookings'] = JSON.stringify(Object.assign(p.get('bookings'), { list: p.get('bookings').list.filter((k) => k.ref !== 'Con000106') }));
+  storage['c2presets.ui'] = JSON.stringify({ open: true, showBookings: false });
+  p = loadPage({ account }); await wait(50);
+  check(p.card('Your bookings').textContent.includes('Pick up Tue 10/29 4:30 PM'), 'otherwise, when to pick up the next one');
+
+  storage['c2presets.presets'] = JSON.stringify({ Shoot: { category: 'Media Arts Equipment', slots: [{ options: [{ id: '609', name: 'Canon 6D with 24-105mm L Series lens C1' }] }, { options: [{ id: ID.tripod, name: 'Tripod' }] }] } });
+  storage['c2presets.ui'] = JSON.stringify({ current: 'Shoot', open: true });
+  storage['c2presets.schedule'] = JSON.stringify({ ranges: [{ startDate: '2030-10-30', startTime: '09:00', endDate: '2030-10-30', endTime: '12:00' }] });
+  p = loadPage({ account, booked: ['609'] }); await wait(100);
+  await until(() => p.root.textContent.includes('Booked by you'));
+  check(p.card('Dates').parentElement.textContent.includes('You already have a booking then: Con000101, Tue 10/29 4:30 PM → Wed 10/30 4:30 PM (6 items).'), 'dates that overlap your booking say so');
+  const camRow = [...p.root.querySelectorAll('.opt')].find((o) => o.textContent.includes('Canon 6D'));
+  check(camRow && camRow.querySelector('.badge.bad').textContent === 'Booked by you' && camRow.textContent.includes('In your booking Con000101'), 'gear you\'ve booked then says "Booked by you", not just "Not available"');
+  p.card('Your bookings').click();
+  check(p.root.querySelector('.bk.hit') && p.root.querySelector('.bk.hit').textContent.includes('Overlaps your selected dates.'), 'the overlapping booking is marked');
+
+  resetStorage();
+  p = loadPage(); await wait(50);
+  check(!p.card('Your bookings') && p.get('bookings').error === 'HTTP 404', 'if My Account can\'t be read, nothing is shown');
+  check(p.accountFetches.length === 1, 'and it isn\'t retried right away');
+  p.save();
+  p = loadPage(); await wait(50);
+  check(p.accountFetches.length === 0 && problemReportOf(p).includes('My Account: HTTP 404'), 'the problem report says why');
+
+  console.log('Export and import presets as a file');
+  resetStorage();
+  storage['c2presets.presets'] = JSON.stringify({ 'A-cam': { category: 'Media Arts Equipment', slots: [{ options: [{ id: ID.tripod, name: 'Tripod', note: '' }] }] } });
+  p = loadPage(); await wait();
+  const blobs = [], downloads = [];
+  p.w.URL.createObjectURL = (b) => { blobs.push(b); return 'blob:test'; };
+  p.w.URL.revokeObjectURL = () => {};
+  p.w.HTMLAnchorElement.prototype.click = function () { downloads.push({ href: this.href, download: this.download }); };
+  p.card('Share and Help').click();
+  p.button('Export presets').click();
+  check(downloads.length === 1 && /^Better Checkout presets \d{4}-\d{2}-\d{2}\.txt$/.test(downloads[0].download) && downloads[0].href === 'blob:test', 'Export presets downloads a .txt file: ' + JSON.stringify(downloads));
+  const fileText = await new Promise((res) => { const r = new p.w.FileReader(); r.onload = () => res(r.result); r.readAsText(blobs[0]); });
+  check(fileText.startsWith('Better Checkout presets, saved') && fileText.includes('Import presets'), 'the file says what it is and how to use it');
+  check(JSON.stringify(JSON.parse(fileText.slice(fileText.indexOf('{')))) === JSON.stringify(p.get('presets')), 'and holds all your presets');
+  check(p.status().includes('Downloads folder'), 'the panel says where it went');
+  check(!p.w.document.querySelector('a[download]'), 'without leaving anything on the page');
+
+  resetStorage();
+  p = loadPage(); await wait();
+  const pickers = [], alerts = [];
+  p.w.alert = (m) => alerts.push(m);
+  p.w.HTMLInputElement.prototype.click = function () { if (this.type === 'file') pickers.push(this); };
+  const pickFile = async (text) => {
+    if (!p.button('Import presets')) p.card('Share and Help').click();
+    p.button('Import presets').click();
+    const input = pickers[pickers.length - 1];
+    Object.defineProperty(input, 'files', { value: [new p.w.File([text], 'presets.txt', { type: 'text/plain' })] });
+    input.dispatchEvent(new p.w.Event('change'));
+    await wait(50);
+  };
+  await pickFile(fileText);
+  check(pickers.length === 1 && pickers[0].accept.includes('.txt'), 'Import presets opens a file picker for .txt files');
+  check(p.get('presets')['A-cam'] && p.get('presets')['A-cam'].slots[0].options[0].id === ID.tripod && p.status().includes('Imported 1 preset.'), 'and adds the presets in the file');
+  await pickFile(JSON.stringify({ Old: { category: '', slots: [{ options: [{ id: '1', name: 'X' }] }] } }));
+  check(p.get('presets').Old, 'files from older exports (only the presets) work too');
+  await pickFile('hello there');
+  check(alerts.length === 1 && /isn't from Export presets/.test(alerts[0]) && Object.keys(p.get('presets')).length === 2, 'any other file is refused with a plain message');
 
   console.log('What\'s new after an update');
   resetStorage();

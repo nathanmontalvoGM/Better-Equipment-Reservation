@@ -1,6 +1,6 @@
 {
   "name": "better-checkout",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "Better Checkout: gear lists, availability at a glance and multi-date booking for MTSU's Connect2 equipment checkout.",
   "scripts": {

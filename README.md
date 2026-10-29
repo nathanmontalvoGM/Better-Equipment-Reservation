@@ -5,6 +5,7 @@ A friendlier way to book gear on MTSU's Connect2 equipment checkout (`mtsu.getco
 - **See what's available for your dates** right on the equipment list, and hide everything that isn't.
 - **Save the gear you use as an equipment preset**, with backups for items that might be taken, and add it all to your basket in one click.
 - **Book several dates in a row.** Better Checkout adds the gear and fills in the times. You finish each booking.
+- **Keep track** of what's in your basket and what you already have booked.
 
 Everything Better Checkout adds to Connect2 carries its slate logo, so you can always tell it apart from Connect2 itself.
 
@@ -55,10 +56,25 @@ The gear you check out every time.
 - **Book these dates** (or **Book both dates** / **Book all 3 dates**) makes one booking per date. Before adding anything it checks every date, and it stops to ask about anything that doesn't fit: use something similar, add it anyway, or leave it out. If Connect2 rejects a time, the panel shows Connect2's reasons and suggested times as buttons. When Connect2 shows **Complete**, the next booking is one click away, and after the last one the run ends by itself.
 - **Add to basket only** adds one of each item for your dates without booking.
 
+### Basket
+
+Shown on the equipment list when Connect2's basket has something in it: each item, whether it's available for your selected dates, **×** to remove one, and **Empty basket**. Removing uses Connect2's own Remove button, so the page reloads once per item.
+
+When you start booking and the basket already has gear in it, Better Checkout stops first and lists it: **Empty the basket first**, or **Book them too**.
+
+### Your bookings
+
+What you have coming up, read from your My Account page every 10 minutes (and right after a booking completes): the dates, the gear, and a link to each booking. Closed, it says what's next ("Pick up Tue 4:30 PM", "Return by Fri 4:30 PM", or "⚠ Overdue").
+
+- **Dates** that overlap one of your bookings say so.
+- Gear you already have booked then says **Booked by you** instead of just "Not available".
+
+Only gear names, dates and booking numbers are kept, never your name or email.
+
 ### Share and Help
 
 - **Share "…"** copies a link that adds your preset for anyone with Better Checkout. They should be signed in to Connect2 before opening it.
-- **Export presets / Import presets** move all your presets as text, for example to another computer.
+- **Export presets** saves all your presets to a text file (usually in Downloads). **Import presets** opens that file, for example on another computer.
 - **Scan equipment list** pages through the whole list once, so **Find something similar** can search all of it.
 - **Copy problem report**: when something goes wrong, press this and send the text to whoever gave you Better Checkout. It lists what Better Checkout did and found, and never includes your name or login.
 
@@ -66,7 +82,7 @@ The gear you check out every time.
 
 - Availability is checked for your selected dates only: your preset first, then the items on the page you're viewing. Results are kept for 30 minutes ("Checked 12 min ago. **Refresh**"), and anything older than 5 minutes is checked again before adding or booking.
 - "Find something similar" matches names (brand, focal length, kind of gear), not real knowledge of gear. You always choose; nothing is swapped without you.
-- Swapping an item after Connect2 rejects a booking means going Back, emptying your basket, and pressing **Redo**. Better Checkout doesn't edit your basket.
+- Swapping an item after Connect2 rejects a booking means going Back and pressing **Redo**; Better Checkout then offers to empty the basket first.
 - A closure in the middle of your dates (like a lunch hour) isn't checked ahead of time; Connect2 catches it when you set the times.
 - The Complete page is recognized by its title or by being the last step. If a booking run doesn't notice it, press **Copy problem report** on that page and send it in.
 - Built for MTSU's Media Arts equipment. Other categories should work, and presets warn when used outside the category they were made in.
@@ -85,9 +101,11 @@ How it fits together:
 - **Connect2** is an ASP.NET WebForms app: every **Add to basket** is a full-page postback, and button IDs depend on an item's position. Presets store each item's stable resource ID (`data-id`), and adding runs as a small queue in `localStorage` that survives the reloads, searching by name when an item isn't on the current page.
 - **Availability** comes from the JSON endpoints Connect2's own page uses (`/wizard/freetime/checkdaterangeforresource`), which answer per pair of dates with "collect from" / "return by" limits. Better Checkout compares those with your pickup and return times.
 - **Booking runs** are a second state machine: basket → Create booking → times filled → hand-off at Terms & Conditions → Complete. They only ever act on the Select resource and Select time steps.
+- **Emptying the basket** is a third small queue (`empty` in `localStorage`): press Connect2's Remove for the next matching item, reload, repeat, giving up after a few tries.
+- **Your bookings** come from GETs of `/account` and its `/account/resourcebookinglist/N` pages, parsed by their `data-label` cells and grouped by booking number.
 
 Release: bump `@version` in the script header for every change pushed to `main`; installed copies only update when it goes up. Add a line to `CHANGES` in the script (search for "What's new") for anything people will notice; it shows once as "What's new" after the update.
 
 The install guide is `docs/index.html`, served by GitHub Pages from `main` → `/docs`.
 
-When Connect2 changes a page, save it (**Save Page As → Webpage, HTML only**), scrub the student's name, `__VIEWSTATE`, `__EVENTVALIDATION`, `__RequestVerificationToken`, and the form's `hash=`, remove any `<div id="c2presets-host">` left by an installed copy, and replace the fixture.
+When Connect2 changes a page, save it (**Save Page As → Webpage, HTML only**), scrub the student's name and email, booking numbers, `__VIEWSTATE`, `__EVENTVALIDATION`, `__RequestVerificationToken`, and the form's `hash=`, remove any `<div id="c2presets-host">` left by an installed copy, and replace the fixture.

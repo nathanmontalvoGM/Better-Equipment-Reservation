@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Better Checkout
 // @namespace    better-checkout.mtsu
-// @version      1.1.0
-// @description  A friendlier way to book gear on MTSU's Connect2 equipment checkout: see what's free for your dates, save the gear you use as lists, and book several dates in a row.
+// @version      1.2.0
+// @description  A friendlier way to book gear on MTSU's Connect2 equipment checkout: see what's available for your dates, save the gear you use as presets, and book several dates in a row.
 // @author       Nathan Montalvo
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHJlY3QgeD0iMiIgeT0iMy4yIiB3aWR0aD0iMjAiIGhlaWdodD0iNS4zIiByeD0iMS40IiBmaWxsPSIjMTcxODFkIi8+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTYuMiAzLjJoMi45TDYuNiA4LjVIMy43ek0xMi4yIDMuMmgyLjlsLTIuNSA1LjNIOS43ek0xOC4yIDMuMmgyLjlsLTIuNSA1LjNoLTIuOXoiLz48cmVjdCB4PSIyIiB5PSIxMCIgd2lkdGg9IjIwIiBoZWlnaHQ9IjExLjUiIHJ4PSIyIiBmaWxsPSIjMTcxODFkIi8+PHBhdGggZD0iTTcuNiAxNS42bDIuOSAyLjggNS45LTUuNyIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZjZjMzIiBzdHJva2Utd2lkdGg9IjIuNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PC9zdmc+
 // @homepageURL  https://github.com/nathanmontalvoGM/Better-Equipment-Reservation
@@ -25,6 +25,10 @@
  *   One click adds a list to the basket, using a unit that's free for your dates.
  * - Booking: one booking per date. For each, it adds the gear, fills in the times and stops at
  *   Terms & Conditions. You finish every booking yourself; it never completes one for you.
+ * - Basket: what's in Connect2's basket, with Empty basket (it presses Connect2's own Remove buttons).
+ *   A booking run asks first when the basket already has gear in it.
+ * - Your bookings: read (GET only) from Connect2's My Account page, kept as gear names, dates and
+ *   booking numbers. Dates that overlap one of them say so, and gear you've booked shows "Booked by you".
  * - Problems are explained where they happen: items free for only part of your dates offer
  *   "Use these dates", items that are taken offer something similar, and Connect2's rejections
  *   show its reasons and suggested times.
@@ -223,6 +227,17 @@
     const a = qs('a[id$="wizardBannerRight_basketLink"]');
     const m = a && a.textContent.match(/\((\d+)/);
     return m ? parseInt(m[1], 10) : -1;
+  }
+
+  // The rows of Connect2's basket drop-down on the equipment list: { id, name, qty, removeBtn }.
+  function basketItems() {
+    return qsa('tr[id*="shoppingCart_resourceRpt"]').map((tr) => {
+      const a = tr.querySelector('a[href*="resourcedetail.aspx?id="]');
+      if (!a) return null;
+      const m = a.getAttribute('href').match(/id=(\d+)/);
+      const q = tr.querySelector('input[id$="_quantity"]');
+      return { id: m ? m[1] : '', name: clean(a.textContent), qty: (q && parseInt(q.value, 10)) || 1, removeBtn: tr.querySelector('input[id$="_bookBtn"]') };
+    }).filter(Boolean);
   }
 
   function pageMessage() {
@@ -674,6 +689,8 @@
     const f = fitFor(r, ab);
     if (f.kind === 'ok') return { text: '✓ Available for your dates', kind: 'ok', detail: '' };
     const part = freePart(r, ab);
+    const own = f.kind !== 'unknown' ? mineDuring(ab, it.name) : null;
+    if (own) return { text: '✗ You already have this booked then', kind: f.kind === 'bad' ? 'bad' : 'limited', detail: 'In your booking ' + own.ref + ', ' + ownLabel(own), part };
     if (f.kind === 'hours') return { text: '⚠ ' + cap(f.why), kind: 'limited', detail: '', part };
     if (f.kind === 'limited') return { text: '⚠ Available for only part of your dates', kind: 'limited', detail: part ? '' : r.detail, part };
     if (f.kind === 'unknown') return { text: '? Couldn\'t check', kind: 'unknown', detail: r.detail };
@@ -681,7 +698,7 @@
   }
 
   // Badges are left off while the script is adding, booking or scanning: those reload the page constantly.
-  const busyElsewhere = () => !!(getRun() || store.get('queue', null) || store.get('scan', null));
+  const busyElsewhere = () => !!(getRun() || store.get('queue', null) || store.get('scan', null) || store.get('empty', null));
 
   function decorateBadges() {
     ensurePageStyles();
@@ -904,6 +921,7 @@
     const ids = [];
     const p = presets[ui.current];
     if (p) for (const sl of p.slots) for (const o of sl.options) ids.push(o.id);
+    if (isSelectPage()) for (const r of basketItems()) if (r.id) ids.push(r.id);
     if (act.source === 'panel' && isSelectPage()) for (const it of pageItems()) if (it.allowed) ids.push(it.id);
     return [...new Set(ids)].filter((id) => !availFor(act.d, id));
   }
@@ -1149,7 +1167,9 @@
     const lines = bookings.map((b, i) => {
       const r = reports[b.index];
       const notes = b.warnings.concat(r && !r.ok ? r.issues : []);
-      return (i + 1) + '. ' + bookingLabel(b) + (notes.length ? '\n     ⚠ ' + notes.join('\n     ⚠ ') : '');
+      const mine = bookedDuring(b);
+      return (i + 1) + '. ' + bookingLabel(b) + (notes.length ? '\n     ⚠ ' + notes.join('\n     ⚠ ') : '') +
+        (mine.length ? '\n     ⓘ You already have ' + mine.map((k) => k.ref).join(', ') + ' then' : '');
     });
     if (!confirm('Better Checkout: book "' + ui.current + '" for ' + (bookings.length > 1 ? bookings.length + ' dates' : 'these dates') + '?\n\n' + lines.join('\n') +
       (problems.length ? '\n\nSome bookings have problems, and Connect2 will probably reject them as entered. Cancel to fix them first: select those dates in the panel to see what\'s wrong.' : '') +
@@ -1164,13 +1184,21 @@
     beginBooking();
   }
 
-  function beginBooking() {
+  // basketChecked: the basket was emptied, or you chose to book what's in it too.
+  function beginBooking(basketChecked) {
     const run = getRun();
     if (!run) return;
     if (!isSelectPage()) return setStatus('Open Book by Category → ' + ((presets[run.preset] || {}).category || 'your equipment category') + ' first.');
-    const n = basketCount();
-    if (n > 0 && !confirm('Your basket already has ' + n + ' item(s). They\'ll be included in booking ' + (run.b + 1) + '. Continue?')) return;
-    run.stage = 'basket'; run.problem = ''; run.notes[run.b] = ''; run.gate = null;
+    const inBasket = basketItems();
+    const n = Math.max(inBasket.length, basketCount());
+    if (n > 0 && !basketChecked) {
+      run.stage = 'leftovers'; run.problem = ''; run.gate = null;
+      run.leftovers = { count: n, items: inBasket.map((r) => ({ id: r.id, name: r.name })) };
+      saveRun(run);
+      log('run', 'booking ' + (run.b + 1) + ': basket already has ' + n + ' item(s); asked what to do');
+      return render();
+    }
+    run.stage = 'basket'; run.problem = ''; run.notes[run.b] = ''; run.gate = null; run.leftovers = null;
     saveRun(run);
     startQueue(run.preset, { dates: bookingDates(run.bookings[run.b]), booking: run.bookings[run.b], run: true });
   }
@@ -1203,6 +1231,7 @@
     run.done = run.done || [];
     if (run.done[run.b]) return; // the Complete page was reloaded
     run.done[run.b] = true;
+    setBookings(null); // re-read My Account so the new booking shows
     const n = run.bookings.length;
     log('run', 'booking ' + (run.b + 1) + ' of ' + n + ' complete');
     if (run.b + 1 >= n) {
@@ -1305,7 +1334,7 @@
       saveRun(run);
       return nextBooking(1);
     }
-    if (run.stage === 'handoff' || run.stage === 'basket' || run.stage === 'gate' || run.stage === 'done') return;
+    if (run.stage === 'handoff' || run.stage === 'basket' || run.stage === 'gate' || run.stage === 'done' || run.stage === 'leftovers') return;
     const bk = run.bookings[run.b];
     if (!isTimePage()) {
       return handoff(run, 'Connect2 didn\'t open the Select time step' + (pageMessage() ? ': ' + pageMessage() : '') +
@@ -1519,6 +1548,139 @@
     setStatus(msg + '\nNext: set your dates and press Create booking.');
   }
 
+  // ---------- removing from the basket (survives page reloads) ----------
+  // empty: { ids, names, tries, max, then: 'run' | '' }. Each press of Connect2's own Remove reloads the page.
+  function startRemoving(rows, then) {
+    if (!isSelectPage()) return setStatus('Open the equipment list to change your basket.');
+    if (!rows.length || busyElsewhere() && then !== 'run') return;
+    store.set('empty', { ids: rows.map((r) => r.id), names: rows.map((r) => r.name), tries: 0, max: rows.length + 3, then: then || '' });
+    log('basket', 'removing ' + rows.length + ' item(s)' + (then === 'run' ? ' before booking' : ''));
+    emptyTick();
+  }
+
+  function emptyTick() {
+    const job = store.get('empty', null);
+    if (!job) return;
+    if (!isSelectPage()) return setStatus('Paused: go back to the equipment list to finish emptying your basket.');
+    const left = basketItems().filter((r) => job.ids.includes(r.id));
+    if (!left.length) return finishRemoving(job, []);
+    if (job.tries >= job.max || !left[0].removeBtn) return finishRemoving(job, left);
+    job.tries += 1;
+    store.set('empty', job);
+    statusText = 'Removing ' + left[0].name + ' from your basket…';
+    render();
+    log('basket', 'pressed Remove for ' + left[0].name + ' (item ' + left[0].id + ')');
+    left[0].removeBtn.click(); // Connect2's own Remove: posts back and reloads the page
+  }
+
+  function stopRemoving() {
+    store.del('empty');
+    log('basket', 'removing stopped');
+    setStatus('Stopped. Anything not removed yet is still in your basket.');
+  }
+
+  function finishRemoving(job, left) {
+    store.del('empty');
+    if (left.length) {
+      log('basket', 'couldn\'t remove ' + left.map((r) => r.name).join('; '));
+      return setStatus('Couldn\'t remove ' + left.map((r) => r.name).join(', ') + '. Open Connect2\'s basket (top right) and remove it there.');
+    }
+    log('basket', 'removed ' + job.ids.length + ' item(s)');
+    if (job.then === 'run' && getRun()) {
+      statusText = '';
+      return beginBooking(true);
+    }
+    setStatus(job.ids.length === 1 ? 'Removed ' + job.names[0] + ' from your basket.' : 'Your basket is empty.');
+  }
+
+  // ---------- your bookings, read from Connect2's My Account page ----------
+  // bookings: { at, list: [{ ref, id, start: { date, time }, end: { date, time }, items: [names], out }] } or { at, error }.
+  // Only gear names, dates and booking numbers are kept; never your name or email (which that page also shows).
+  const BOOKINGS_MINUTES = 10;      // re-read My Account after this long
+  const BOOKINGS_RETRY_MINUTES = 2; // after a failed read
+  const BOOKINGS_MAX_PAGES = 5;
+  let loadingBookings = false;
+  let bookingsData = store.get('bookings', null); // read once; localStorage keeps it across pages
+  const setBookings = (v) => { bookingsData = v; if (v) store.set('bookings', v); else store.del('bookings'); };
+
+  const localMs = (dt) => { const [y, m, d] = dt.date.split('-').map(Number); return new Date(y, m - 1, d, Number(dt.time.slice(0, 2)), Number(dt.time.slice(3, 5))).getTime(); };
+  const asRange = (k) => ({ startDate: k.start.date, startTime: k.start.time, endDate: k.end.date, endTime: k.end.time });
+  const ownLabel = (k) => shortLabel(asRange(k));
+  function myBookings() {
+    const c = bookingsData;
+    return c && Array.isArray(c.list) ? c.list.filter((k) => k.out || localMs(k.end) > Date.now()) : [];
+  }
+  // Your bookings that overlap booking b (a range from the Dates section).
+  function bookedDuring(b) {
+    if (!b) return [];
+    const s = minutesAt(b.startDate, b.startTime), e = minutesAt(b.endDate, b.endTime);
+    return myBookings().filter((k) => minutesAt(k.start.date, k.start.time) < e && minutesAt(k.end.date, k.end.time) > s);
+  }
+  const sameName = (a, b) => clean(a).toLowerCase() === clean(b).toLowerCase();
+  // Your own booking that has this item during booking b, if any.
+  const mineDuring = (b, name) => bookedDuring(b).find((k) => k.items.some((n) => sameName(n, name))) || null;
+
+  // Rows of the "Your resource bookings" table (one row per item), grouped into bookings.
+  function readBookingRows(doc, into) {
+    for (const tr of qsa('tr', doc)) {
+      const cell = (label) => tr.querySelector('td[data-label="' + label + '"]');
+      const s = parseMdyTime(clean(cell('Start date') && cell('Start date').textContent));
+      const e = parseMdyTime(clean(cell('End date') && cell('End date').textContent));
+      if (!s || !e) continue;
+      const a = cell('Ref no') && cell('Ref no').querySelector('a');
+      const ref = a ? clean(a.textContent) : '';
+      const idm = a && (a.getAttribute('href') || '').match(/id=(\d+)/);
+      let k = into.find((x) => x.ref === ref && x.start.date === s.date && x.start.time === s.time && x.end.date === e.date && x.end.time === e.time);
+      if (!k) into.push(k = { ref, id: idm ? idm[1] : '', start: s, end: e, items: [], out: false });
+      const name = clean(cell('Resource') && cell('Resource').textContent);
+      if (name) k.items.push(name);
+      if (clean(cell('Checked out') && cell('Checked out').textContent)) k.out = true;
+    }
+  }
+
+  async function loadBookings(force) {
+    const c = bookingsData;
+    if (loadingBookings || (!force && c && minutesOld(c) < (c.error ? BOOKINGS_RETRY_MINUTES : BOOKINGS_MINUTES))) return;
+    loadingBookings = true;
+    try {
+      const list = [];
+      const seen = new Set();
+      let url = '/account', found = false;
+      while (url && !seen.has(url) && seen.size < BOOKINGS_MAX_PAGES) {
+        seen.add(url);
+        // Read-only GETs of your own account pages, like opening them in a tab.
+        const r = await fetch(url, { credentials: 'same-origin', headers: seen.size > 1 ? { 'X-Requested-With': 'XMLHttpRequest' } : {} });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
+        if (doc.getElementById('resourceBookingDiv') || doc.querySelector('td[data-label="Start date"]')) found = true;
+        readBookingRows(doc, list);
+        const next = qsa('a[href*="resourcebookinglist/"]', doc).find((a) => /next/i.test(a.textContent));
+        url = next ? next.getAttribute('href') : '';
+      }
+      if (!found) throw new Error('no bookings list on My Account (signed out?)');
+      const now = Date.now();
+      const upcoming = list.filter((k) => k.out || localMs(k.end) > now).sort((a, b) => localMs(a.start) - localMs(b.start));
+      setBookings({ at: now, list: upcoming });
+      log('bookings', 'read ' + upcoming.length + ' upcoming from My Account (' + seen.size + (seen.size > 1 ? ' pages)' : ' page)'));
+    } catch (e) {
+      setBookings({ at: Date.now(), error: String(e.message || e).slice(0, 120) });
+      log('bookings', 'couldn\'t read My Account: ' + String(e.message || e).slice(0, 120));
+    } finally {
+      loadingBookings = false;
+    }
+    render();
+  }
+
+  // What to do next about one of your bookings.
+  function bookingState(k) {
+    const now = Date.now();
+    const at = (dt) => shortDay(dt.date) + ' ' + time12s(dt.time);
+    if (k.out && localMs(k.end) < now) return { kind: 'overdue', text: '⚠ Overdue: due back ' + at(k.end), short: '⚠ Overdue' };
+    if (k.out) return { kind: 'out', text: 'Checked out. Return by ' + at(k.end), short: 'Return by ' + at(k.end) };
+    if (localMs(k.start) <= now) return { kind: 'now', text: 'Pickup time has started. Return by ' + at(k.end), short: 'Return by ' + at(k.end) };
+    return { kind: 'soon', text: '', short: 'Pick up ' + at(k.start) }; // the dates above already say it
+  }
+
   // ---------- copying, sharing and problem reports ----------
   function copyText(textToCopy, okMsg) {
     const fallback = () => { prompt('Copy this (Ctrl+C or ⌘C), then press OK:', textToCopy); setStatus(okMsg); };
@@ -1594,7 +1756,7 @@
         'next page ' + yes(nextPageLink()),
         'previous page ' + yes(prevPageLink()),
         'list total ' + (listTotal() || '?'),
-        'basket ' + (basketCount() >= 0 ? basketCount() : 'not found'),
+        'basket ' + (basketCount() >= 0 ? basketCount() : 'not found') + ' (' + basketItems().length + ' rows)',
         'Next/Create button ' + (nextBtn() ? (nextBtn().disabled ? 'disabled' : 'enabled') : 'not found'),
         'time fields ' + yes(timeField('startDate')),
         'clash box ' + yes(qs('[id$="MainWizardContent_suggestionsDv"]')),
@@ -1608,6 +1770,8 @@
         catalogSize() + ' known items',
         Object.keys(availability).length + ' saved results',
         'only-free switch ' + (ui.onlyFree ? 'on' : 'off'),
+        (() => { const c = bookingsData; return !c ? 'My Account not read' : c.error ? 'My Account: ' + c.error : myBookings().length + ' upcoming booking(s)'; })(),
+        store.get('empty', null) ? 'removing from basket' : 'not removing',
       ].join('; '),
       '',
       'Recent steps (oldest first):',
@@ -1688,28 +1852,76 @@
     saveUi(); render();
   }
 
-  function exportPresets() {
-    copyText(JSON.stringify(presets, null, 2), 'Copied all your presets as text. Someone else can add them with Import presets.');
+  // Save text as a file in the browser's downloads.
+  function downloadText(filename, text) {
+    let url = null;
+    try { url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' })); } catch (e) { url = null; }
+    const a = document.createElement('a');
+    a.href = url || 'data:text/plain;charset=utf-8,' + encodeURIComponent(text);
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    if (url) setTimeout(() => URL.revokeObjectURL(url), 60000);
   }
 
+  function exportPresets() {
+    const n = Object.keys(presets).length;
+    if (!n) return;
+    const file = 'Better Checkout presets ' + todayYmd() + '.txt';
+    downloadText(file, 'Better Checkout presets, saved ' + todayYmd() + '. To add them: Better Checkout panel → Share and Help → Import presets, then pick this file.\n\n' +
+      JSON.stringify(presets, null, 2) + '\n');
+    log('export', n + ' preset(s) to a file');
+    setStatus('Saved ' + (n === 1 ? 'your preset' : 'all ' + n + ' presets') + ' to "' + file + '", usually in your Downloads folder. To add ' + (n === 1 ? 'it' : 'them') + ' on another computer, press Import presets there and pick that file.');
+  }
+
+  const readFileText = (f) => (f.text ? f.text() : new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result));
+    r.onerror = () => rej(r.error);
+    r.readAsText(f);
+  }));
+
   function importPresets() {
-    const txt = prompt('Paste the text from Export presets:');
-    if (!txt) return;
+    qsa('input.c2p-file').forEach((x) => x.remove());
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.txt,.json,text/plain,application/json';
+    input.className = 'c2p-file';
+    input.style.display = 'none';
+    input.addEventListener('change', () => {
+      const f = input.files && input.files[0];
+      input.remove();
+      if (f) readFileText(f).then(importPresetsText, () => alert('Couldn\'t open that file. Try picking it again.'));
+    });
+    document.body.appendChild(input);
+    input.click(); // the browser's own file picker
+  }
+
+  // A file from Export presets: a line of instructions, then the presets as JSON (older exports are only the JSON).
+  function importPresetsText(txt) {
+    let data = null;
     try {
-      const data = normalizeAll(JSON.parse(txt));
-      let n = 0;
-      for (const [name, p] of Object.entries(data)) {
-        let key = name;
-        if (presets[key] && !confirm('Replace your existing "' + key + '"?')) key = name + ' (imported)';
-        presets[key] = p;
-        n += 1;
-      }
-      if (!ui.current) ui.current = Object.keys(presets)[0] || '';
-      savePresets(); saveUi();
-      setStatus('Imported ' + n + (n === 1 ? ' preset.' : ' presets.'));
-    } catch (e) {
-      alert('That text isn\'t from Export presets. Copy it again and try once more.');
+      const i = String(txt).indexOf('{');
+      data = i >= 0 ? normalizeAll(JSON.parse(String(txt).slice(i))) : null;
+    } catch (e) { data = null; }
+    if (!data || !Object.keys(data).length) {
+      log('import', 'not a presets file');
+      return alert('That file isn\'t from Export presets. Pick the .txt file that Export presets saved.');
     }
+    let n = 0;
+    for (const [name, p] of Object.entries(data)) {
+      let key = name;
+      if (presets[key] && !confirm('Replace your existing "' + key + '"?')) key = name + ' (imported)';
+      presets[key] = p;
+      n += 1;
+    }
+    if (!ui.current) ui.current = Object.keys(presets)[0] || '';
+    ui.showPresets = true;
+    savePresets(); saveUi();
+    log('import', n + ' preset(s) from a file');
+    setStatus('Imported ' + n + (n === 1 ? ' preset.' : ' presets.'));
   }
 
   // ---------- UI ----------
@@ -1828,6 +2040,19 @@
       display: flex; flex-direction: column; gap: 7px; overflow: hidden; }
     .run::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 5px; background: ${STRIPES}; }
     .run-t { font-weight: 700; font-size: 13.5px; }
+    .blist li { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; border-top: 1px solid ${C.line}; font-size: 12.5px; }
+    .blist li:first-child { border-top: 0; }
+    .blist .nm { flex: 1; min-width: 0; }
+    .run .blist { background: ${C.paper}; }
+    .mine { width: 100%; font-size: 12px; color: ${C.ink2}; padding-left: 8px; border-left: 2px solid ${C.ink}; }
+    .bk { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid ${C.line}; border-radius: 8px; }
+    .bk.hit { border: 1.5px solid ${C.ink}; padding: 7.5px 9.5px; }
+    .bk-h { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
+    .bk-when { font-weight: 600; }
+    .bk-ref { font-size: 12px; color: ${C.muted}; white-space: nowrap; }
+    a.bk-ref { color: ${C.ink}; text-underline-offset: 2px; }
+    .bk-due { font-size: 12.5px; }
+    .bk-due.late { font-weight: 700; }
     @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
   `;
 
@@ -1913,6 +2138,13 @@
     return kids.length ? el('div', { class: 'extras' }, kids) : null;
   }
 
+  // "You already have Con000101 then": your existing bookings during a range.
+  function renderOverlap(mine) {
+    if (!mine.length) return null;
+    return el('div', { class: 'mine' }, 'You already have ' + (mine.length > 1 ? mine.length + ' bookings' : 'a booking') + ' then: ' +
+      mine.map((k) => k.ref + ', ' + ownLabel(k) + ' (' + k.items.length + (k.items.length === 1 ? ' item)' : ' items)')).join('; ') + '.');
+  }
+
   function renderDates(p) {
     const bookings = computeBookings(schedule.ranges);
     const active = activeIndex();
@@ -1933,6 +2165,7 @@
           el('button', { class: 'x', title: 'Remove these dates', 'aria-label': 'Remove these dates', onclick: () => removeRange(i) }, '×')),
         editing || !b ? rangeEditor(r, i) : null,
         b && b.warnings.length ? el('div', { class: 'warn' }, '⚠ ' + b.warnings.join('; ')) : null,
+        b && !b.invalid ? renderOverlap(bookedDuring(b)) : null,
         isActive && b && !b.invalid ? rangeExtras(p, b, i) : null));
     });
     kids.push(el('div', { class: 'row' }, el('button', { class: 'mini', onclick: addRange }, '+ Add dates')));
@@ -1948,16 +2181,18 @@
       const f = a && act.booking ? fitFor(a, act.booking) : null;
       const kind = !a ? (ab ? 'pending' : null) : f ? (f.kind === 'hours' ? 'limited' : f.kind) : a.kind;
       const part = a && ab ? freePart(a, ab) : null;
+      const own = a && ab && kind !== 'ok' && kind !== 'unknown' ? mineDuring(ab, o.name) : null;
       const plain = { ok: 'Available', bad: 'Not available', limited: 'Part of the time', unknown: 'Couldn\'t check' };
-      const label = !a ? 'Checking…' : f && f.kind === 'hours' ? cap(f.why) : part ? 'Part of the time' : plain[kind] || a.label;
+      const label = !a ? 'Checking…' : own ? 'Booked by you' : f && f.kind === 'hours' ? cap(f.why) : part ? 'Part of the time' : plain[kind] || a.label;
       return el('div', { class: 'opt' + (oi ? ' alt' : '') },
         oi ? el('span', { class: 'or' }, 'or') : null,
         el('span', { class: 'nm' }, o.name),
-        kind ? el('span', { class: 'badge ' + kind, title: a ? a.detail || '' : '' }, label) : null,
+        kind ? el('span', { class: 'badge ' + kind, title: own ? 'In your booking ' + own.ref + ', ' + ownLabel(own) : a ? a.detail || '' : '' }, label) : null,
         editing && slot.options.length > 1 ? el('button', { class: 'x', title: 'Remove this backup', 'aria-label': 'Remove ' + o.name, onclick: () => removeOption(si, oi) }, '×') : null,
         o.note && WARN_RE.test(o.note) ? el('div', { class: 'warn' }, '⚠ ' + o.note) : null,
         part ? el('div', { class: 'freepart' }, 'Available ' + shortLabel(part)) : null,
-        a && kind !== 'ok' && a.detail && !part && !(f && f.kind === 'hours') ? el('div', { class: 'detail' }, a.detail) : null);
+        own ? el('div', { class: 'detail' }, 'In your booking ' + own.ref + ', ' + ownLabel(own)) : null,
+        a && kind !== 'ok' && a.detail && !part && !own && !(f && f.kind === 'hours') ? el('div', { class: 'detail' }, a.detail) : null);
     });
     // Nothing in this slot is free for the selected dates: offer something similar.
     const units = ab ? slot.options.map((o) => fitFor(availFor(act.d, o.id), ab)) : [];
@@ -2010,7 +2245,7 @@
 
     if (p.slots.length) {
       const bookings = computeBookings(schedule.ranges);
-      const busy = !!queue || starting || !!getRun();
+      const busy = !!queue || starting || !!getRun() || !!store.get('empty', null);
       const where = isSelectPage();
       const addBtn = (cls, label) => el('button', { class: cls, disabled: busy || !where, title: 'Add one of each item to your basket' + (act ? ' (a unit that\'s available ' + act.label + ')' : ''), onclick: () => startQueue(ui.current) }, label);
       if (bookings.length) {
@@ -2030,6 +2265,12 @@
   // One line per change people will notice, newest first. Shown once after an update, never on a first install.
   const INSTALL_PAGE = 'https://nathanmontalvogm.github.io/Better-Equipment-Reservation/';
   const CHANGES = [
+    { v: '1.2.0', notes: [
+      'A Basket section shows what\'s in your basket, with Empty basket and × to remove one item.',
+      'Booking when your basket already has gear in it? You can empty it first.',
+      'Your bookings: what you have coming up, with pickup and return times. Dates that overlap one of them say so.',
+      'Export presets saves a text file, and Import presets opens one.',
+    ] },
     { v: '1.1.0', notes: [
       'After an update, a short note like this one tells you what changed.',
       'Setting up a classmate? Send them the install guide: it\'s linked under Share and Help.',
@@ -2075,8 +2316,8 @@
       el('div', { class: 'row' },
         el('button', { class: 'mini', onclick: copyShareLink, disabled: !p || !p.slots.length, title: 'Copy a link that adds this preset for anyone with Better Checkout' },
           p ? 'Share "' + ui.current + '"' : 'Share a preset'),
-        el('button', { class: 'mini', onclick: exportPresets, disabled: !names.length, title: 'Copy all your presets as text' }, 'Export presets'),
-        el('button', { class: 'mini', onclick: importPresets, title: 'Add presets from exported text' }, 'Import presets')),
+        el('button', { class: 'mini', onclick: exportPresets, disabled: !names.length, title: 'Save all your presets to a text file' }, 'Export presets'),
+        el('button', { class: 'mini', onclick: importPresets, title: 'Add presets from a file that Export presets saved' }, 'Import presets')),
       el('div', { class: 'row' },
         store.get('scan', null)
           ? el('button', { class: 'mini', onclick: stopScan }, 'Stop scan')
@@ -2087,6 +2328,57 @@
         ? 'Knows ' + catalogSize() + ' items for suggesting similar gear. '
         : 'Scan the equipment list once to get suggestions for similar gear. '),
         el('a', { href: INSTALL_PAGE, target: '_blank', rel: 'noopener' }, 'Install guide'), ' (send it to classmates).'),
+    ];
+  }
+
+  // ----- Basket section -----
+  function smallBadge(id, name, act) {
+    if (!act || !id) return null;
+    const a = availFor(act.d, id);
+    if (!a) return act.source === 'panel' ? el('span', { class: 'badge pending' }, 'Checking…') : null;
+    const f = act.booking ? fitFor(a, act.booking) : null;
+    const kind = f ? (f.kind === 'hours' ? 'limited' : f.kind) : a.kind;
+    const own = act.booking && kind !== 'ok' && kind !== 'unknown' ? mineDuring(act.booking, name) : null;
+    const label = own ? 'Booked by you' : { ok: 'Available', bad: 'Not available', limited: 'Part of the time', unknown: 'Couldn\'t check' }[kind] || a.label;
+    return el('span', { class: 'badge ' + kind, title: own ? 'In your booking ' + own.ref + ', ' + ownLabel(own) : (f && f.why) || a.detail || '' }, label);
+  }
+
+  function renderBasket(items) {
+    const act = activeDates();
+    const locked = busyElsewhere() || starting; // adding, booking, scanning or already removing
+    return [
+      el('ul', { class: 'blist', 'aria-label': 'Your basket' }, items.map((r) => el('li', {},
+        el('span', { class: 'nm' }, r.name + (r.qty > 1 ? ' ×' + r.qty : '')),
+        smallBadge(r.id, r.name, act),
+        locked ? null : el('button', { class: 'x', title: 'Remove from your basket', 'aria-label': 'Remove ' + r.name + ' from your basket', onclick: () => startRemoving([r]) }, '×')))),
+      locked ? null : el('div', { class: 'actions' },
+        el('button', { class: 'mini', title: 'Remove everything from your basket (the page reloads once per item)', onclick: () => startRemoving(basketItems()) }, 'Empty basket'),
+        act ? el('span', { class: 'muted' }, 'Availability is for ' + (act.booking ? shortLabel(act.booking) : act.label) + '.') : null),
+    ];
+  }
+
+  // ----- Your bookings section -----
+  function renderBookings(list) {
+    const act = activeBooking();
+    const ago = bookingsData ? Math.floor(minutesOld(bookingsData)) : 0;
+    const during = act ? bookedDuring(act) : [];
+    const shown = list.slice(0, 6);
+    return [
+      ...shown.map((k) => {
+        const st = bookingState(k);
+        const hit = during.includes(k);
+        return el('div', { class: 'bk' + (hit ? ' hit' : '') },
+          el('div', { class: 'bk-h' },
+            el('span', { class: 'bk-when' }, ownLabel(k)),
+            k.id ? el('a', { class: 'bk-ref', href: '/bookings/view.aspx?id=' + encodeURIComponent(k.id), target: '_blank', rel: 'noopener', title: 'Open this booking in Connect2 (new tab)' }, k.ref) : el('span', { class: 'bk-ref' }, k.ref)),
+          st.text ? el('div', { class: 'bk-due' + (st.kind === 'overdue' ? ' late' : '') }, st.text) : null,
+          el('div', { class: 'muted' }, k.items.join(' · ')),
+          hit ? el('div', { class: 'muted' }, 'Overlaps your selected dates.') : null);
+      }),
+      list.length > shown.length ? el('div', { class: 'muted' }, '+ ' + (list.length - shown.length) + ' more on My Account.') : null,
+      el('div', { class: 'foot' }, 'From your My Account page, ' + (ago < 1 ? 'just now' : ago + ' min ago') + '. ',
+        el('button', { class: 'link', disabled: loadingBookings, onclick: () => loadBookings(true) }, 'Refresh'), ' · ',
+        el('a', { href: '/account', target: '_blank', rel: 'noopener' }, 'Open My Account')),
     ];
   }
 
@@ -2116,6 +2408,14 @@
             el('button', { onclick: () => decideGate(g.si, 'anyway') }, 'Add it anyway'),
             el('button', { onclick: () => decideGate(g.si, 'skip') }, 'Leave it out'))));
       }
+    } else if (run.stage === 'leftovers' && run.leftovers) {
+      const lo = run.leftovers;
+      const emptying = !!store.get('empty', null);
+      box.append(el('div', {}, 'Your basket already has ' + (lo.count === 1 ? '1 item' : lo.count + ' items') + '. Anything in the basket is booked along with booking ' + (run.b + 1) + '.'));
+      if (lo.items.length) box.append(el('ul', { class: 'blist' }, lo.items.map((r) => el('li', {}, el('span', { class: 'nm' }, r.name)))));
+      box.append(el('div', { class: 'row' },
+        lo.items.length && isSelectPage() ? el('button', { class: 'primary', disabled: emptying, onclick: () => startRemoving(basketItems(), 'run') }, emptying ? 'Emptying…' : 'Empty the basket first') : null,
+        el('button', { disabled: emptying, onclick: () => beginBooking(true) }, 'Book them too')));
     } else if (run.stage === 'done') {
       box.append(el('div', { class: 'okline' }, '✓ Booking ' + (run.b + 1) + ' of ' + n + ' is complete.'));
       box.append(el('div', { class: 'muted' }, 'Next: ' + bookingLabel(run.bookings[run.b + 1]) + '.'));
@@ -2146,7 +2446,7 @@
             renderReplacements('clash:' + run.b + ':' + opt.id, opt, bk, p, 'Add as backup', (c) => {
               addAlternate(run.preset, opt.id, c);
               replacements = {};
-              setStatus(c.name + ' is now a backup for ' + opt.name + '. To use it for this booking: press Back, empty your basket, then press Redo booking ' + (run.b + 1) + '.');
+              setStatus(c.name + ' is now a backup for ' + opt.name + '. To use it for this booking: press Back, then Redo booking ' + (run.b + 1) + ' and empty the basket first.');
             })));
         }
       } else {
@@ -2188,14 +2488,16 @@
       const run = getRun();
       if (run) body.append(renderRun(run));
       if (news.length) body.append(renderWhatsNew(news));
-      if (statusText || queue) {
+      const removing = store.get('empty', null);
+      const working = queue || removing;
+      if (statusText || working) {
         body.append(el('div', { class: 'status', role: 'status' },
           statusText,
-          queue ? el('div', { class: 'row' },
-            el('button', { class: 'mini', onclick: () => runQueue(true) }, 'Resume'),
-            el('button', { class: 'mini', onclick: stopQueue }, 'Stop')) : null,
-          statusUndo && !queue ? el('div', { class: 'row' }, el('button', { class: 'mini', onclick: () => statusUndo() }, 'Undo')) : null,
-          !queue ? el('button', { class: 'x close', title: 'Dismiss', 'aria-label': 'Dismiss', onclick: () => setStatus('') }, '×') : null));
+          working ? el('div', { class: 'row' },
+            el('button', { class: 'mini', onclick: () => (queue ? runQueue(true) : emptyTick()) }, 'Resume'),
+            el('button', { class: 'mini', onclick: queue ? stopQueue : stopRemoving }, 'Stop')) : null,
+          statusUndo && !working ? el('div', { class: 'row' }, el('button', { class: 'mini', onclick: () => statusUndo() }, 'Undo')) : null,
+          !working ? el('button', { class: 'x close', title: 'Dismiss', 'aria-label': 'Dismiss', onclick: () => setStatus('') }, '×') : null));
       }
       if (!run && !schedule.ranges.length && !Object.keys(presets).length) {
         body.append(el('div', { class: 'intro' }, 'Pick your dates, save the gear you use, then book it all in one go.'));
@@ -2207,6 +2509,15 @@
       body.append(card('showPresets', true, 'Equipment Presets',
         p ? ui.current + ', ' + p.slots.length + (p.slots.length === 1 ? ' item' : ' items') : 'None yet',
         renderPreset(p, act, queue)));
+      const inBasket = isSelectPage() ? basketItems() : [];
+      if (inBasket.length) {
+        body.append(card('showBasket', true, 'Basket', inBasket.length === 1 ? '1 item' : inBasket.length + ' items', renderBasket(inBasket)));
+      }
+      const mine = myBookings();
+      if (mine.length) {
+        const late = mine.find((k) => bookingState(k).kind === 'overdue');
+        body.append(card('showBookings', false, 'Your bookings', (late ? bookingState(late) : bookingState(mine[0])).short, renderBookings(mine)));
+      }
       body.append(card('showMore', false, 'Share and Help', '', renderMore()));
       panel.append(body);
     }
@@ -2260,9 +2571,12 @@
   recordCatalog();
   adoptConnect2Dates();
   log('page', 'opened' + (pageKind() === 'list' ? ': ' + qsa('li.resource-list-item').length + ' items, ' + pageItems().length + ' recognized' : '') + ' · script ' + VERSION);
+  if (isCompletePage()) setBookings(null); // a new booking: re-read My Account
   render();
   importFromLink();
   if (store.get('scan', null)) scanTick();
   else if (store.get('queue', null)) runQueue(true);
+  else if (store.get('empty', null)) emptyTick();
   else runTick();
+  if (!store.get('scan', null) && !store.get('queue', null) && !store.get('empty', null)) loadBookings();
 })();
